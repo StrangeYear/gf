@@ -984,3 +984,56 @@ func Test_Issue4542(t *testing.T) {
 		t.AssertNil(err)
 	})
 }
+
+type jsonMarshalerStruct struct {
+	Error error
+	value string
+}
+
+func (j jsonMarshalerStruct) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + j.value + `"`), nil
+}
+
+func Test_JSONMarshalerStructJsonString(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		type Payload struct {
+			Name      string              `json:"name"`
+			CreatedAt jsonMarshalerStruct `json:"createdAt"`
+		}
+
+		payload := Payload{
+			Name:      "john",
+			CreatedAt: jsonMarshalerStruct{value: "2024-01-02 03:04:05"},
+		}
+
+		jsonStringByGJson := gjson.MustEncodeString(payload)
+		jsonStringByGJsonObject := gjson.New(payload).MustToJsonString()
+		jsonStringByGConv := gconv.String(payload)
+		payloadMap := gconv.Map(payload, gconv.MapOption{
+			Deep: true,
+			Tags: []string{"json"},
+		})
+		payloadMapWithJSONMarshaler := gconv.Map(payload, gconv.MapOption{
+			Deep:             true,
+			Tags:             []string{"json"},
+			UseJSONMarshaler: true,
+		})
+		t.Assert(jsonStringByGJson, `{"name":"john","createdAt":"2024-01-02 03:04:05"}`)
+		t.Assert(jsonStringByGJsonObject, `{"createdAt":"2024-01-02 03:04:05","name":"john"}`)
+		t.Assert(jsonStringByGConv, `{"name":"john","createdAt":"2024-01-02 03:04:05"}`)
+		t.Assert(fmt.Sprintf("%T", payloadMap["createdAt"]), "map[string]interface {}")
+		t.Assert(gjson.New(payloadMap).Get("createdAt.Error").Val(), nil)
+		t.Assert(payloadMapWithJSONMarshaler["createdAt"], "2024-01-02 03:04:05")
+		t.Assert(fmt.Sprintf("%T", payloadMapWithJSONMarshaler["createdAt"]), "string")
+
+		parsed := gjson.New(jsonStringByGJson)
+		t.Assert(parsed.Get("name").String(), "john")
+		t.Assert(parsed.Get("createdAt").String(), "2024-01-02 03:04:05")
+		t.Assert(fmt.Sprintf("%T", parsed.Get("createdAt").Val()), "string")
+
+		parsedFromObject := gjson.New(jsonStringByGJsonObject)
+		t.Assert(parsedFromObject.Get("name").String(), "john")
+		t.Assert(parsedFromObject.Get("createdAt").String(), "2024-01-02 03:04:05")
+		t.Assert(fmt.Sprintf("%T", parsedFromObject.Get("createdAt").Val()), "string")
+	})
+}

@@ -7,6 +7,7 @@
 package converter
 
 import (
+	stdjson "encoding/json"
 	"reflect"
 	"strings"
 
@@ -33,6 +34,10 @@ type MapOption struct {
 	// ContinueOnError specifies whether to continue converting the next element
 	// if one element converting fails.
 	ContinueOnError bool
+
+	// UseJSONMarshaler specifies whether to use json.Marshaler for struct/map/slice
+	// elements when doing recursive map conversion.
+	UseJSONMarshaler bool
 }
 
 func (c *Converter) getMapOption(option ...MapOption) MapOption {
@@ -365,6 +370,11 @@ func (c *Converter) doMapConvertForMapOrStructValue(in doMapConvertForMapOrStruc
 		reflectValue = reflectValue.Elem()
 		reflectKind = reflectValue.Kind()
 	}
+	if in.Option.UseJSONMarshaler && !in.IsRoot {
+		if convertedValue, ok, err := c.doMapConvertForJSONMarshaler(in.Value, reflectValue); ok || err != nil {
+			return convertedValue, err
+		}
+	}
 	switch reflectKind {
 	case reflect.Map:
 		var (
@@ -651,4 +661,23 @@ func (c *Converter) doMapConvertForMapOrStructValue(in doMapConvertForMapOrStruc
 	default:
 	}
 	return in.Value, nil
+}
+
+func (c *Converter) doMapConvertForJSONMarshaler(value any, reflectValue reflect.Value) (convertedValue any, ok bool, err error) {
+	marshaler, ok := value.(stdjson.Marshaler)
+	if !ok && reflectValue.IsValid() && reflectValue.CanAddr() {
+		marshaler, ok = reflectValue.Addr().Interface().(stdjson.Marshaler)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+
+	jsonBytes, err := marshaler.MarshalJSON()
+	if err != nil {
+		return nil, true, err
+	}
+	if err = json.UnmarshalUseNumber(jsonBytes, &convertedValue); err != nil {
+		return nil, true, err
+	}
+	return convertedValue, true, nil
 }
