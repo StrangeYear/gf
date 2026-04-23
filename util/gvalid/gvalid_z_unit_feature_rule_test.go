@@ -513,6 +513,116 @@ func Test_Phone(t *testing.T) {
 	})
 }
 
+func Test_RulesIf(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		rules := map[string]string{
+			"Value": "rules-if:Type,email,email,Type,phone,phone",
+		}
+		t.AssertNil(g.Validator().Data(g.Map{
+			"Type":  "email",
+			"Value": "john@example.com",
+		}).Rules(rules).Run(ctx))
+		t.AssertNil(g.Validator().Data(g.Map{
+			"Type":  "phone",
+			"Value": "13619908979",
+		}).Rules(rules).Run(ctx))
+		t.AssertNil(g.Validator().Data(g.Map{
+			"Type":  "qq",
+			"Value": "not-email-or-phone",
+		}).Rules(rules).Run(ctx))
+
+		err := g.Validator().Data(g.Map{
+			"Type":  "email",
+			"Value": "13619908979",
+		}).Rules(rules).Run(ctx)
+		t.AssertNE(err, nil)
+		t.AssertNE(err.Maps()["Value"]["email"], nil)
+
+		err = g.Validator().Data(g.Map{
+			"Type":  "phone",
+			"Value": "john@example.com",
+		}).Rules(rules).Run(ctx)
+		t.AssertNE(err, nil)
+		t.AssertNE(err.Maps()["Value"]["phone"], nil)
+	})
+	gtest.C(t, func(t *gtest.T) {
+		type Request struct {
+			Type  string
+			Value string `v:"rules-if:Type,email,email,Type,phone,phone"`
+		}
+		t.AssertNil(g.Validator().Data(Request{
+			Type:  "email",
+			Value: "john@example.com",
+		}).Run(ctx))
+		t.AssertNil(g.Validator().Data(Request{
+			Type:  "phone",
+			Value: "13619908979",
+		}).Run(ctx))
+
+		err := g.Validator().Data(Request{
+			Type:  "email",
+			Value: "13619908979",
+		}).Run(ctx)
+		t.AssertNE(err, nil)
+		t.AssertNE(err.Maps()["Value"]["email"], nil)
+	})
+	gtest.C(t, func(t *gtest.T) {
+		rules := map[string]string{
+			"Value": "ci|rules-if:Type,email,email",
+		}
+		t.AssertNil(g.Validator().Data(g.Map{
+			"Type":  "EMAIL",
+			"Value": "john@example.com",
+		}).Rules(rules).Run(ctx))
+	})
+	gtest.C(t, func(t *gtest.T) {
+		rules := map[string]string{
+			"Value": "rules-if:Type,email,required&email,Type,phone,required&phone",
+		}
+		err := g.Validator().Data(g.Map{
+			"Type":  "email",
+			"Value": "",
+		}).Rules(rules).Run(ctx)
+		t.AssertNE(err, nil)
+		t.AssertNE(err.Maps()["Value"]["required"], nil)
+	})
+	gtest.C(t, func(t *gtest.T) {
+		rules := map[string]string{
+			"Value": "rules-if:Type,email,required&email",
+		}
+		err := g.Validator().Data(g.Map{
+			"Type":  "email",
+			"Value": "",
+		}).Rules(rules).Run(ctx)
+		t.AssertNE(err, nil)
+		t.AssertNE(err.Maps()["Value"]["required"], nil)
+		t.AssertNE(err.Maps()["Value"]["email"], nil)
+	})
+	gtest.C(t, func(t *gtest.T) {
+		rules := map[string]string{
+			"Value": "bail|rules-if:Type,email,required&email",
+		}
+		err := g.Validator().Data(g.Map{
+			"Type":  "email",
+			"Value": "",
+		}).Rules(rules).Run(ctx)
+		t.AssertNE(err, nil)
+		t.AssertNE(err.Maps()["Value"]["required"], nil)
+		t.AssertNil(err.Maps()["Value"]["email"])
+	})
+	gtest.C(t, func(t *gtest.T) {
+		rules := map[string]string{
+			"Value": "ci|rules-if:Type,confirm,same:Other",
+		}
+		err := g.Validator().Data(g.Map{
+			"Type":  "confirm",
+			"Other": "abc",
+			"Value": "ABC",
+		}).Rules(rules).Run(ctx)
+		t.AssertNil(err)
+	})
+}
+
 func Test_PhoneLoose(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		m := g.MapStrBool{

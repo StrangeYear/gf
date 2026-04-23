@@ -100,6 +100,7 @@ func (v *Validator) doCheckValue(ctx context.Context, in doCheckValueInput) Erro
 		hasBailRule        = v.bail
 		hasForeachRule     = v.foreach
 		hasCaseInsensitive = v.caseInsensitive
+		additionalRules    = make([]string, 0)
 	)
 	for index := 0; index < len(ruleItems); {
 		var (
@@ -167,6 +168,28 @@ func (v *Validator) doCheckValue(ctx context.Context, in doCheckValueInput) Erro
 					Message:     message,
 					Option: builtin.RunOption{
 						CaseInsensitive: hasCaseInsensitive,
+						RunRule: func(rule string) (map[string]error, error) {
+							dataMap := in.DataMap
+							if dataMap == nil {
+								dataMap = gconv.Map(in.DataRaw)
+							}
+							validator := v.Clone()
+							validator.bail = hasBailRule
+							validator.caseInsensitive = hasCaseInsensitive
+							if validatedError := validator.doCheckValue(ctx, doCheckValueInput{
+								Name:      in.Name,
+								Value:     value,
+								ValueType: in.ValueType,
+								Rule:      rule,
+								Messages:  customMsgMap,
+								DataRaw:   in.DataRaw,
+								DataMap:   dataMap,
+							}); validatedError != nil {
+								_, errorItem := validatedError.FirstItem()
+								return errorItem, nil
+							}
+							return nil, nil
+						},
 					},
 				})
 
@@ -176,6 +199,18 @@ func (v *Validator) doCheckValue(ctx context.Context, in doCheckValueInput) Erro
 
 			// Error handling.
 			if err != nil {
+				if ruleResultError, ok := err.(*builtin.RuleResultError); ok {
+					if ruleResultError.Rule != "" {
+						additionalRules = append(additionalRules, ruleResultError.Rule)
+					}
+					for ruleKey, ruleError := range ruleResultError.Errors {
+						ruleErrorMap[ruleKey] = ruleError
+					}
+					if hasBailRule {
+						goto CheckDone
+					}
+					continue
+				}
 				// Error variable replacement for error message.
 				if errMsg := err.Error(); gstr.Contains(errMsg, "{") {
 					errMsg = gstr.ReplaceByMap(errMsg, map[string]string{
@@ -212,9 +247,13 @@ func (v *Validator) doCheckValue(ctx context.Context, in doCheckValueInput) Erro
 
 CheckDone:
 	if len(ruleErrorMap) > 0 {
+		rule := in.Rule
+		if len(additionalRules) > 0 {
+			rule += "|" + strings.Join(additionalRules, "|")
+		}
 		return newValidationError(
 			gcode.CodeValidationFailed,
-			[]fieldRule{{Name: in.Name, Rule: in.Rule}},
+			[]fieldRule{{Name: in.Name, Rule: rule}},
 			map[string]map[string]error{
 				in.Name: ruleErrorMap,
 			},

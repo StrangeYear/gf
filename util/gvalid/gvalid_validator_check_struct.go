@@ -285,7 +285,7 @@ func (v *Validator) doCheckStruct(ctx context.Context, object any) Error {
 	}
 
 	// The following logic is the same as some of CheckMap but with sequence support.
-	for _, checkRuleItem := range checkRules {
+	for index, checkRuleItem := range checkRules {
 		// it ignores Meta object.
 		if !checkRuleItem.IsMeta {
 			value = getPossibleValueFromMap(
@@ -319,6 +319,7 @@ func (v *Validator) doCheckStruct(ctx context.Context, object any) Error {
 			DataMap:   inputParamMap,
 		}); validatedError != nil {
 			_, errorItem := validatedError.FirstItem()
+			checkRules[index].Rule = appendMissingRuleKeys(checkRuleItem.Rule, errorItem)
 			// ============================================================
 			// Only in map and struct validations:
 			// If value is nil or empty string and has no required* rules,

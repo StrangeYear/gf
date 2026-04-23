@@ -118,7 +118,7 @@ func (v *Validator) doCheckMap(ctx context.Context, params any) Error {
 	}
 
 	// The following logic is the same as some of CheckStruct but without sequence support.
-	for _, checkRuleItem := range checkRules {
+	for index, checkRuleItem := range checkRules {
 		if len(checkRuleItem.Rule) == 0 {
 			continue
 		}
@@ -137,6 +137,7 @@ func (v *Validator) doCheckMap(ctx context.Context, params any) Error {
 			DataMap:   inputParamMap,
 		}); validatedError != nil {
 			_, errorItem := validatedError.FirstItem()
+			checkRules[index].Rule = appendMissingRuleKeys(checkRuleItem.Rule, errorItem)
 			// ===========================================================
 			// Only in map and struct validations:
 			// If value is nil or empty string and has no required* rules,

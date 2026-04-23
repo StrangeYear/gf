@@ -12,6 +12,8 @@ package builtin
 
 import (
 	"reflect"
+	"sort"
+	"strings"
 
 	"github.com/gogf/gf/v2/container/gvar"
 )
@@ -39,7 +41,33 @@ type RunInput struct {
 }
 
 type RunOption struct {
-	CaseInsensitive bool // CaseInsensitive indicates that it does Case-Insensitive comparison in string.
+	CaseInsensitive bool        // CaseInsensitive indicates that it does Case-Insensitive comparison in string.
+	RunRule         RunRuleFunc // RunRule runs extra validation rules for current field value.
+}
+
+// RunRuleFunc runs extra validation rules for current field value.
+type RunRuleFunc func(rule string) (map[string]error, error)
+
+// RuleResultError is returned by rules that run extra validation rules.
+type RuleResultError struct {
+	Rule   string
+	Errors map[string]error
+}
+
+func (e *RuleResultError) Error() string {
+	if e == nil || len(e.Errors) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(e.Errors))
+	for key := range e.Errors {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	messages := make([]string, 0, len(keys))
+	for _, key := range keys {
+		messages = append(messages, e.Errors[key].Error())
+	}
+	return strings.Join(messages, "; ")
 }
 
 var (
