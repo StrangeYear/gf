@@ -14,6 +14,7 @@ import (
 	"go/printer"
 	"go/token"
 	"go/types"
+	"sync"
 
 	"github.com/gogf/gf/v2/os/gfile"
 	"github.com/gogf/gf/v2/text/gstr"
@@ -24,6 +25,21 @@ type structInfo struct {
 	structName string
 	comment    string
 }
+
+type typeSpecCacheValue struct {
+	typeSpecMap map[string]*ast.TypeSpec
+	err         error
+}
+
+type typesPackageCacheValue struct {
+	typesPkg *types.Package
+	err      error
+}
+
+var (
+	typeSpecCache     sync.Map
+	typesPackageCache sync.Map
+)
 
 // getStructsNameInSrc retrieves all struct names and comment
 // that end in "Req" and have "g.Meta" in their body.
@@ -41,7 +57,7 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 	if err != nil {
 		return nil, err
 	}
-	typesPkg, _ := c.getTypesPackageInDir(gfile.Dir(filePath), node.Name.Name)
+	var typesPkg *types.Package
 
 	ast.Inspect(node, func(n ast.Node) bool {
 		if typeSpec, ok := n.(*ast.TypeSpec); ok {
@@ -60,7 +76,11 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 					return true
 				}
 				resStructName := gstr.TrimRightStr(structName, "Req", 1) + "Res"
-				if !c.isStructLikeType(typeSpecMap, resStructName, make(map[string]struct{})) &&
+				structLikeInAST := c.isStructLikeType(typeSpecMap, resStructName, make(map[string]struct{}))
+				if !structLikeInAST && typesPkg == nil {
+					typesPkg, _ = c.getTypesPackageInDir(gfile.Dir(filePath), node.Name.Name)
+				}
+				if !structLikeInAST &&
 					!c.isStructLikeGoPackageType(typesPkg, resStructName, make(map[types.Type]struct{})) {
 					err = fmt.Errorf(
 						`missing response struct "%s" for request struct "%s" in file "%s"`,
@@ -90,12 +110,18 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 }
 
 func (c CGenCtrl) getTypeSpecsInPackage(dirPath, packageName string) (typeSpecMap map[string]*ast.TypeSpec, err error) {
+	cacheKey := dirPath + "\n" + packageName
+	if value, ok := typeSpecCache.Load(cacheKey); ok {
+		cacheValue := value.(typeSpecCacheValue)
+		return cacheValue.typeSpecMap, cacheValue.err
+	}
 	var (
 		fileSet = token.NewFileSet()
 		pkgs    map[string]*ast.Package
 	)
 	pkgs, err = parser.ParseDir(fileSet, dirPath, nil, parser.ParseComments)
 	if err != nil {
+		typeSpecCache.Store(cacheKey, typeSpecCacheValue{err: err})
 		return nil, err
 	}
 	typeSpecMap = make(map[string]*ast.TypeSpec)
@@ -111,10 +137,16 @@ func (c CGenCtrl) getTypeSpecsInPackage(dirPath, packageName string) (typeSpecMa
 			})
 		}
 	}
+	typeSpecCache.Store(cacheKey, typeSpecCacheValue{typeSpecMap: typeSpecMap})
 	return typeSpecMap, nil
 }
 
 func (c CGenCtrl) getTypesPackageInDir(dirPath, packageName string) (typesPkg *types.Package, err error) {
+	cacheKey := dirPath + "\n" + packageName
+	if value, ok := typesPackageCache.Load(cacheKey); ok {
+		cacheValue := value.(typesPackageCacheValue)
+		return cacheValue.typesPkg, cacheValue.err
+	}
 	var pkgs []*packages.Package
 	pkgs, err = packages.Load(&packages.Config{
 		Dir: dirPath,
@@ -124,13 +156,16 @@ func (c CGenCtrl) getTypesPackageInDir(dirPath, packageName string) (typesPkg *t
 			packages.NeedDeps,
 	}, ".")
 	if err != nil {
+		typesPackageCache.Store(cacheKey, typesPackageCacheValue{err: err})
 		return nil, err
 	}
 	for _, pkg := range pkgs {
 		if pkg != nil && pkg.Name == packageName && pkg.Types != nil {
+			typesPackageCache.Store(cacheKey, typesPackageCacheValue{typesPkg: pkg.Types})
 			return pkg.Types, nil
 		}
 	}
+	typesPackageCache.Store(cacheKey, typesPackageCacheValue{})
 	return nil, nil
 }
 
