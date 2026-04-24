@@ -51,42 +51,48 @@ destination file name storing automatically generated go files, cases are as fol
 | Kebab           | any-kind-of-string |
 | KebabScreaming  | ANY-KIND-OF-STRING |
 `
-	CGenServiceBriefWatchFile    = `used in file watcher, it re-generates all service go files only if given file is under srcFolder`
-	CGenServiceBriefStPattern    = `regular expression matching struct name for generating service. default: ^s([A-Z]\\\\w+)$`
-	CGenServiceBriefPackages     = `produce go files only for given source packages(source folders)`
-	CGenServiceBriefImportPrefix = `custom import prefix to calculate import path for generated importing go file of logic`
-	CGenServiceBriefClear        = `delete all generated go files that are not used any further`
+	CGenServiceBriefWatchFile        = `used in file watcher, it re-generates all service go files only if given file is under srcFolder`
+	CGenServiceBriefStPattern        = `regular expression matching struct name for generating service. default: ^s([A-Z]\\\\w+)$`
+	CGenServiceBriefPackages         = `produce go files only for given source packages(source folders)`
+	CGenServiceBriefImportPrefix     = `custom import prefix to calculate import path for generated importing go file of logic`
+	CGenServiceBriefGenerateInstance = `generate global instance variable/getter/register code for service interfaces. default: true`
+	CGenServiceBriefPrefixI          = `whether generated interface names start with "I". default: true`
+	CGenServiceBriefClear            = `delete all generated go files that are not used any further`
 )
 
 func init() {
 	gtag.Sets(g.MapStrStr{
-		`CGenServiceConfig`:            CGenServiceConfig,
-		`CGenServiceUsage`:             CGenServiceUsage,
-		`CGenServiceBrief`:             CGenServiceBrief,
-		`CGenServiceEg`:                CGenServiceEg,
-		`CGenServiceBriefSrcFolder`:    CGenServiceBriefSrcFolder,
-		`CGenServiceBriefDstFolder`:    CGenServiceBriefDstFolder,
-		`CGenServiceBriefFileNameCase`: CGenServiceBriefFileNameCase,
-		`CGenServiceBriefWatchFile`:    CGenServiceBriefWatchFile,
-		`CGenServiceBriefStPattern`:    CGenServiceBriefStPattern,
-		`CGenServiceBriefPackages`:     CGenServiceBriefPackages,
-		`CGenServiceBriefImportPrefix`: CGenServiceBriefImportPrefix,
-		`CGenServiceBriefClear`:        CGenServiceBriefClear,
+		`CGenServiceConfig`:                CGenServiceConfig,
+		`CGenServiceUsage`:                 CGenServiceUsage,
+		`CGenServiceBrief`:                 CGenServiceBrief,
+		`CGenServiceEg`:                    CGenServiceEg,
+		`CGenServiceBriefSrcFolder`:        CGenServiceBriefSrcFolder,
+		`CGenServiceBriefDstFolder`:        CGenServiceBriefDstFolder,
+		`CGenServiceBriefFileNameCase`:     CGenServiceBriefFileNameCase,
+		`CGenServiceBriefWatchFile`:        CGenServiceBriefWatchFile,
+		`CGenServiceBriefStPattern`:        CGenServiceBriefStPattern,
+		`CGenServiceBriefPackages`:         CGenServiceBriefPackages,
+		`CGenServiceBriefImportPrefix`:     CGenServiceBriefImportPrefix,
+		`CGenServiceBriefGenerateInstance`: CGenServiceBriefGenerateInstance,
+		`CGenServiceBriefPrefixI`:          CGenServiceBriefPrefixI,
+		`CGenServiceBriefClear`:            CGenServiceBriefClear,
 	})
 }
 
 type (
 	CGenService      struct{}
 	CGenServiceInput struct {
-		g.Meta          `name:"service" config:"{CGenServiceConfig}" usage:"{CGenServiceUsage}" brief:"{CGenServiceBrief}" eg:"{CGenServiceEg}"`
-		SrcFolder       string   `short:"s" name:"srcFolder" brief:"{CGenServiceBriefSrcFolder}" d:"internal/logic"`
-		DstFolder       string   `short:"d" name:"dstFolder" brief:"{CGenServiceBriefDstFolder}" d:"internal/service"`
-		DstFileNameCase string   `short:"f" name:"dstFileNameCase" brief:"{CGenServiceBriefFileNameCase}" d:"Snake"`
-		WatchFile       string   `short:"w" name:"watchFile" brief:"{CGenServiceBriefWatchFile}"`
-		StPattern       string   `short:"a" name:"stPattern" brief:"{CGenServiceBriefStPattern}" d:"^s([A-Z]\\w+)$"`
-		Packages        []string `short:"p" name:"packages" brief:"{CGenServiceBriefPackages}"`
-		ImportPrefix    string   `short:"i" name:"importPrefix" brief:"{CGenServiceBriefImportPrefix}"`
-		Clear           bool     `short:"l" name:"clear" brief:"{CGenServiceBriefClear}" orphan:"true"`
+		g.Meta           `name:"service" config:"{CGenServiceConfig}" usage:"{CGenServiceUsage}" brief:"{CGenServiceBrief}" eg:"{CGenServiceEg}"`
+		SrcFolder        string   `short:"s" name:"srcFolder" brief:"{CGenServiceBriefSrcFolder}" d:"internal/logic"`
+		DstFolder        string   `short:"d" name:"dstFolder" brief:"{CGenServiceBriefDstFolder}" d:"internal/service"`
+		DstFileNameCase  string   `short:"f" name:"dstFileNameCase" brief:"{CGenServiceBriefFileNameCase}" d:"Snake"`
+		WatchFile        string   `short:"w" name:"watchFile" brief:"{CGenServiceBriefWatchFile}"`
+		StPattern        string   `short:"a" name:"stPattern" brief:"{CGenServiceBriefStPattern}" d:"^s([A-Z]\\w+)$"`
+		Packages         []string `short:"p" name:"packages" brief:"{CGenServiceBriefPackages}"`
+		ImportPrefix     string   `short:"i" name:"importPrefix" brief:"{CGenServiceBriefImportPrefix}"`
+		GenerateInstance bool     `name:"generateInstance" brief:"{CGenServiceBriefGenerateInstance}" d:"true"`
+		PrefixI          bool     `name:"prefixI" brief:"{CGenServiceBriefPrefixI}" d:"true"`
+		Clear            bool     `short:"l" name:"clear" brief:"{CGenServiceBriefClear}" orphan:"true"`
 	}
 	CGenServiceOutput struct{}
 )

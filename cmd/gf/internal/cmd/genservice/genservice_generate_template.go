@@ -29,7 +29,9 @@ func (c CGenService) generatePackageImports(generatedContent *bytes.Buffer, pack
 
 // generateType type definitions.
 // See: const.TemplateGenServiceContentInterface
-func (c CGenService) generateType(generatedContent *bytes.Buffer, srcStructFunctions *gmap.ListMap, dstPackageName string) {
+func (c CGenService) generateType(
+	generatedContent *bytes.Buffer, in CGenServiceInput, srcStructFunctions *gmap.ListMap, dstPackageName string,
+) {
 	generatedContent.WriteString("type(")
 	generatedContent.WriteString("\n")
 
@@ -53,7 +55,7 @@ func (c CGenService) generateType(generatedContent *bytes.Buffer, srcStructFunct
 		// funcContents to string.
 		generatedContent.WriteString(
 			gstr.Trim(gstr.ReplaceByMap(consts.TemplateGenServiceContentInterface, g.MapStrStr{
-				"{InterfaceName}":  "I" + structName,
+				"{InterfaceName}":  c.getInterfaceName(in, structName),
 				"{FuncDefinition}": gstr.Join(funcContents, "\n\t"),
 			})),
 		)
@@ -67,7 +69,7 @@ func (c CGenService) generateType(generatedContent *bytes.Buffer, srcStructFunct
 
 // generateVar variable definitions.
 // See: const.TemplateGenServiceContentVariable
-func (c CGenService) generateVar(generatedContent *bytes.Buffer, srcStructFunctions *gmap.ListMap) {
+func (c CGenService) generateVar(generatedContent *bytes.Buffer, in CGenServiceInput, srcStructFunctions *gmap.ListMap) {
 	// Generating variable and register definitions.
 	var variableContent string
 
@@ -75,7 +77,7 @@ func (c CGenService) generateVar(generatedContent *bytes.Buffer, srcStructFuncti
 		structName := key.(string)
 		variableContent += gstr.Trim(gstr.ReplaceByMap(consts.TemplateGenServiceContentVariable, g.MapStrStr{
 			"{StructName}":    structName,
-			"{InterfaceName}": "I" + structName,
+			"{InterfaceName}": c.getInterfaceName(in, structName),
 		}))
 		variableContent += "\n"
 		return true
@@ -91,15 +93,31 @@ func (c CGenService) generateVar(generatedContent *bytes.Buffer, srcStructFuncti
 
 // generateFunc function definitions.
 // See: const.TemplateGenServiceContentRegister
-func (c CGenService) generateFunc(generatedContent *bytes.Buffer, srcStructFunctions *gmap.ListMap) {
+func (c CGenService) generateFunc(generatedContent *bytes.Buffer, in CGenServiceInput, srcStructFunctions *gmap.ListMap) {
 	// Variable register function definitions.
 	srcStructFunctions.Iterator(func(key, value any) bool {
 		structName := key.(string)
 		generatedContent.WriteString(gstr.Trim(gstr.ReplaceByMap(consts.TemplateGenServiceContentRegister, g.MapStrStr{
 			"{StructName}":    structName,
-			"{InterfaceName}": "I" + structName,
+			"{GetterName}":    c.getGetterName(in, structName),
+			"{InterfaceName}": c.getInterfaceName(in, structName),
 		})))
 		generatedContent.WriteString("\n\n")
 		return true
 	})
+}
+
+func (c CGenService) getInterfaceName(in CGenServiceInput, structName string) string {
+	if in.PrefixI {
+		return "I" + structName
+	}
+	return structName
+}
+
+func (c CGenService) getGetterName(in CGenServiceInput, structName string) string {
+	if in.PrefixI {
+		return structName
+	}
+	// Without the `I` prefix, `func User() User` would conflict with the interface declaration.
+	return "Get" + structName
 }

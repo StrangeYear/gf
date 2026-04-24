@@ -8,6 +8,7 @@ package cmd
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gogf/gf/v2/os/gfile"
@@ -281,5 +282,76 @@ func Test_Issue4242(t *testing.T) {
 			gfile.GetContents(dstFolder+filepath.FromSlash("/issue_4242_alias.go")),
 			gfile.GetContents(gtest.DataPath("issue", "4242", "service", "issue_4242_alias.go")),
 		)
+	})
+}
+
+func Test_Gen_Service_NoGenerateInstance(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		var (
+			path      = gfile.Temp(guid.S())
+			dstFolder = path + filepath.FromSlash("/service")
+			srvFolder = gtest.DataPath("genservice", "logic")
+			in        = genservice.CGenServiceInput{
+				SrcFolder:       srvFolder,
+				DstFolder:       dstFolder,
+				DstFileNameCase: "Snake",
+				Packages:        []string{"user"},
+			}
+		)
+		err := gutil.FillStructWithDefault(&in)
+		t.AssertNil(err)
+		in.GenerateInstance = false
+
+		err = gfile.Mkdir(path)
+		t.AssertNil(err)
+		defer gfile.Remove(path)
+
+		genSrv := srvFolder + filepath.FromSlash("/logic.go")
+		defer gfile.Remove(genSrv)
+
+		_, err = genservice.CGenService{}.Service(ctx, in)
+		t.AssertNil(err)
+
+		content := gfile.GetContents(dstFolder + filepath.FromSlash("/user.go"))
+		t.Assert(strings.Contains(content, "var ("), false)
+		t.Assert(strings.Contains(content, "func User() IUser"), false)
+		t.Assert(strings.Contains(content, "func RegisterUser(i IUser)"), false)
+	})
+}
+
+func Test_Gen_Service_InterfaceWithoutPrefixI(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		var (
+			path      = gfile.Temp(guid.S())
+			dstFolder = path + filepath.FromSlash("/service")
+			srvFolder = gtest.DataPath("genservice", "logic")
+			in        = genservice.CGenServiceInput{
+				SrcFolder:       srvFolder,
+				DstFolder:       dstFolder,
+				DstFileNameCase: "Snake",
+				Packages:        []string{"user"},
+			}
+		)
+		err := gutil.FillStructWithDefault(&in)
+		t.AssertNil(err)
+		in.GenerateInstance = true
+		in.PrefixI = false
+
+		err = gfile.Mkdir(path)
+		t.AssertNil(err)
+		defer gfile.Remove(path)
+
+		genSrv := srvFolder + filepath.FromSlash("/logic.go")
+		defer gfile.Remove(genSrv)
+
+		_, err = genservice.CGenService{}.Service(ctx, in)
+		t.AssertNil(err)
+
+		content := gfile.GetContents(dstFolder + filepath.FromSlash("/user.go"))
+		t.Assert(strings.Contains(content, "User interface {"), true)
+		t.Assert(strings.Contains(content, "IUser interface {"), false)
+		t.Assert(strings.Contains(content, "localUser"), true)
+		t.Assert(strings.Contains(content, "func GetUser() User"), true)
+		t.Assert(strings.Contains(content, "func RegisterUser(i User)"), true)
 	})
 }

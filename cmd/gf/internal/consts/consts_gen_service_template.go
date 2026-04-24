@@ -28,7 +28,7 @@ local{StructName} {InterfaceName}
 `
 
 const TemplateGenServiceContentRegister = `
-func {StructName}() {InterfaceName} {
+func {GetterName}() {InterfaceName} {
 	if local{StructName} == nil {
 		panic("implement not found for interface {InterfaceName}, forgot register?")
 	}
