@@ -35,18 +35,10 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 	if err != nil {
 		return
 	}
-	structNameSet := make(map[string]struct{})
-
-	ast.Inspect(node, func(n ast.Node) bool {
-		typeSpec, ok := n.(*ast.TypeSpec)
-		if !ok {
-			return true
-		}
-		if _, ok = typeSpec.Type.(*ast.StructType); ok {
-			structNameSet[typeSpec.Name.Name] = struct{}{}
-		}
-		return true
-	})
+	typeSpecMap, err := c.getTypeSpecsInPackage(gfile.Dir(filePath), node.Name.Name)
+	if err != nil {
+		return nil, err
+	}
 
 	ast.Inspect(node, func(n ast.Node) bool {
 		if typeSpec, ok := n.(*ast.TypeSpec); ok {
@@ -65,7 +57,7 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 					return true
 				}
 				resStructName := gstr.TrimRightStr(structName, "Req", 1) + "Res"
-				if _, ok = structNameSet[resStructName]; !ok {
+				if !c.isStructLikeType(typeSpecMap, resStructName, make(map[string]struct{})) {
 					err = fmt.Errorf(
 						`missing response struct "%s" for request struct "%s" in file "%s"`,
 						resStructName, structName, filePath,
@@ -91,6 +83,63 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 	})
 
 	return
+}
+
+func (c CGenCtrl) getTypeSpecsInPackage(dirPath, packageName string) (typeSpecMap map[string]*ast.TypeSpec, err error) {
+	var (
+		fileSet = token.NewFileSet()
+		pkgs    map[string]*ast.Package
+	)
+	pkgs, err = parser.ParseDir(fileSet, dirPath, nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	typeSpecMap = make(map[string]*ast.TypeSpec)
+	if pkg, ok := pkgs[packageName]; ok {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				typeSpec, ok := n.(*ast.TypeSpec)
+				if !ok {
+					return true
+				}
+				typeSpecMap[typeSpec.Name.Name] = typeSpec
+				return true
+			})
+		}
+	}
+	return typeSpecMap, nil
+}
+
+func (c CGenCtrl) isStructLikeType(typeSpecMap map[string]*ast.TypeSpec, typeName string, visited map[string]struct{}) bool {
+	if _, ok := visited[typeName]; ok {
+		return false
+	}
+	typeSpec, ok := typeSpecMap[typeName]
+	if !ok {
+		return false
+	}
+	visited[typeName] = struct{}{}
+	return c.isStructLikeExpr(typeSpecMap, typeSpec.Type, visited)
+}
+
+func (c CGenCtrl) isStructLikeExpr(typeSpecMap map[string]*ast.TypeSpec, expr ast.Expr, visited map[string]struct{}) bool {
+	switch expr := expr.(type) {
+	case *ast.StructType:
+		return true
+
+	case *ast.Ident:
+		return c.isStructLikeType(typeSpecMap, expr.Name, visited)
+
+	case *ast.IndexExpr:
+		return c.isStructLikeExpr(typeSpecMap, expr.X, visited)
+
+	case *ast.IndexListExpr:
+		return c.isStructLikeExpr(typeSpecMap, expr.X, visited)
+
+	case *ast.ParenExpr:
+		return c.isStructLikeExpr(typeSpecMap, expr.X, visited)
+	}
+	return false
 }
 
 // getImportsInDst retrieves all import paths in the file.

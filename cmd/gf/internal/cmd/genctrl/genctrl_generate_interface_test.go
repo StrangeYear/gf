@@ -137,3 +137,95 @@ type GetProfileReq struct {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestGetStructsNameInSrcAllowsAliasedResponseStruct(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "user.go")
+	content := strings.TrimLeft(`
+package v1
+
+import "github.com/gogf/gf/v2/frame/g"
+
+type ProfileRes struct{}
+
+type GetProfileReq struct {
+	g.Meta `+"`path:\"/profile\" method:\"get\"`"+`
+}
+
+type GetProfileRes = ProfileRes
+`, "\n")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("write api definition file: %v", err)
+	}
+
+	_, err := (CGenCtrl{}).getStructsNameInSrc(filePath)
+	if err != nil {
+		t.Fatalf("expected aliased response struct to pass validation, got: %v", err)
+	}
+}
+
+func TestGetStructsNameInSrcAllowsDefinedResponseStructFromStructType(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "user.go")
+	content := strings.TrimLeft(`
+package v1
+
+import "github.com/gogf/gf/v2/frame/g"
+
+type ProfileRes struct{}
+
+type GetProfileReq struct {
+	g.Meta `+"`path:\"/profile\" method:\"get\"`"+`
+}
+
+type GetProfileRes ProfileRes
+`, "\n")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("write api definition file: %v", err)
+	}
+
+	_, err := (CGenCtrl{}).getStructsNameInSrc(filePath)
+	if err != nil {
+		t.Fatalf("expected defined response type to pass validation, got: %v", err)
+	}
+}
+
+func TestGetStructsNameInSrcAllowsAliasedResponseStructFromSiblingFile(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	reqFilePath := filepath.Join(dir, "user.go")
+	reqContent := strings.TrimLeft(`
+package v1
+
+import "github.com/gogf/gf/v2/frame/g"
+
+type GetProfileReq struct {
+	g.Meta `+"`path:\"/profile\" method:\"get\"`"+`
+}
+
+type GetProfileRes = BaseProfileRes
+`, "\n")
+	if err := os.WriteFile(reqFilePath, []byte(reqContent), 0644); err != nil {
+		t.Fatalf("write api definition file: %v", err)
+	}
+
+	resFilePath := filepath.Join(dir, "base.go")
+	resContent := strings.TrimLeft(`
+package v1
+
+type BaseProfileRes struct{}
+`, "\n")
+	if err := os.WriteFile(resFilePath, []byte(resContent), 0644); err != nil {
+		t.Fatalf("write sibling response file: %v", err)
+	}
+
+	_, err := (CGenCtrl{}).getStructsNameInSrc(reqFilePath)
+	if err != nil {
+		t.Fatalf("expected sibling aliased response struct to pass validation, got: %v", err)
+	}
+}
