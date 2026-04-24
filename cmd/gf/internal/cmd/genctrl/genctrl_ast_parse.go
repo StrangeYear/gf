@@ -8,6 +8,7 @@ package genctrl
 
 import (
 	"bytes"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/printer"
@@ -34,6 +35,18 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 	if err != nil {
 		return
 	}
+	structNameSet := make(map[string]struct{})
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		typeSpec, ok := n.(*ast.TypeSpec)
+		if !ok {
+			return true
+		}
+		if _, ok = typeSpec.Type.(*ast.StructType); ok {
+			structNameSet[typeSpec.Name.Name] = struct{}{}
+		}
+		return true
+	})
 
 	ast.Inspect(node, func(n ast.Node) bool {
 		if typeSpec, ok := n.(*ast.TypeSpec); ok {
@@ -50,6 +63,14 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 				// ignore struct name that match a request, but has no g.Meta in its body.
 				if !gstr.Contains(buf.String(), `g.Meta`) {
 					return true
+				}
+				resStructName := gstr.TrimRightStr(structName, "Req", 1) + "Res"
+				if _, ok = structNameSet[resStructName]; !ok {
+					err = fmt.Errorf(
+						`missing response struct "%s" for request struct "%s" in file "%s"`,
+						resStructName, structName, filePath,
+					)
+					return false
 				}
 
 				comment := typeSpec.Doc.Text()

@@ -110,3 +110,30 @@ type IUserV1 interface {
 		t.Fatalf("expected legacy I-prefixed interface to be renamed when keepOldPrefixI=false")
 	}
 }
+
+func TestGetStructsNameInSrcReturnsErrorWhenResponseStructMissing(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "user.go")
+	content := strings.TrimLeft(`
+package v1
+
+import "github.com/gogf/gf/v2/frame/g"
+
+type GetProfileReq struct {
+	g.Meta `+"`path:\"/profile\" method:\"get\"`"+`
+}
+`, "\n")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("write api definition file: %v", err)
+	}
+
+	_, err := (CGenCtrl{}).getStructsNameInSrc(filePath)
+	if err == nil {
+		t.Fatalf("expected missing response struct error")
+	}
+	if !strings.Contains(err.Error(), `missing response struct "GetProfileRes"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
