@@ -29,7 +29,7 @@ func newControllerGenerator() *controllerGenerator {
 	return &controllerGenerator{}
 }
 
-func (c *controllerGenerator) Generate(dstModuleFolderPath string, apiModuleApiItems []apiItem, merge bool) (err error) {
+func (c *controllerGenerator) Generate(dstModuleFolderPath string, apiModuleApiItems []apiItem, interfacePrefixIByVersion map[string]bool, merge bool) (err error) {
 	var (
 		doneApiItemSet = gset.NewStrSet()
 	)
@@ -43,7 +43,7 @@ func (c *controllerGenerator) Generate(dstModuleFolderPath string, apiModuleApiI
 			importPath = gstr.Replace(gfile.Dir(item.Import), "\\", "/", -1)
 		)
 		if err = c.doGenerateCtrlNewByModuleAndVersion(
-			dstModuleFolderPath, item.Module, item.Version, importPath,
+			dstModuleFolderPath, item.Module, item.Version, importPath, interfacePrefixIByVersion[item.Version],
 		); err != nil {
 			return
 		}
@@ -75,13 +75,13 @@ func (c *controllerGenerator) getSubItemsByModuleAndVersion(items []apiItem, mod
 }
 
 func (c *controllerGenerator) doGenerateCtrlNewByModuleAndVersion(
-	dstModuleFolderPath, module, version, importPath string,
+	dstModuleFolderPath, module, version, importPath string, prefixI bool,
 ) (err error) {
 	var (
 		moduleFilePath    = filepath.FromSlash(gfile.Join(dstModuleFolderPath, module+".go"))
 		moduleFilePathNew = filepath.FromSlash(gfile.Join(dstModuleFolderPath, module+"_new.go"))
 		ctrlName          = fmt.Sprintf(`Controller%s`, gstr.UcFirst(version))
-		interfaceName     = fmt.Sprintf(`%s.I%s%s`, module, gstr.CaseCamel(module), gstr.UcFirst(version))
+		interfaceName     = formatCtrlInterfaceName(module, version, prefixI)
 		newFuncName       = fmt.Sprintf(`New%s`, gstr.UcFirst(version))
 		alreadyCreated    bool
 	)
@@ -277,6 +277,18 @@ func methodExists(filePath, ctrlName, methodName string) bool {
 		}
 	}
 	return false
+}
+
+func formatCtrlInterfaceName(module, version string, prefixI bool) string {
+	return fmt.Sprintf(`%s.%s`, module, formatInterfaceTypeName(module, version, prefixI))
+}
+
+func formatInterfaceTypeName(module, version string, prefixI bool) string {
+	name := fmt.Sprintf(`%s%s`, gstr.CaseCamel(module), gstr.UcFirst(version))
+	if prefixI {
+		return "I" + name
+	}
+	return name
 }
 
 // functionExists checks if a plain function with the given name exists in the file.

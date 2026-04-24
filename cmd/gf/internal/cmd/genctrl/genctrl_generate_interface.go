@@ -8,6 +8,9 @@ package genctrl
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 
 	"github.com/gogf/gf/v2/container/gmap"
@@ -28,18 +31,18 @@ func newApiInterfaceGenerator() *apiInterfaceGenerator {
 	return &apiInterfaceGenerator{}
 }
 
-func (c *apiInterfaceGenerator) Generate(apiModuleFolderPath string, apiModuleApiItems []apiItem) (err error) {
+func (c *apiInterfaceGenerator) Generate(apiModuleFolderPath string, apiModuleApiItems []apiItem, interfacePrefixIByVersion map[string]bool) (err error) {
 	if len(apiModuleApiItems) == 0 {
 		return nil
 	}
 	var firstApiItem = apiModuleApiItems[0]
-	if err = c.doGenerate(apiModuleFolderPath, firstApiItem.Module, apiModuleApiItems); err != nil {
+	if err = c.doGenerate(apiModuleFolderPath, firstApiItem.Module, apiModuleApiItems, interfacePrefixIByVersion); err != nil {
 		return
 	}
 	return
 }
 
-func (c *apiInterfaceGenerator) doGenerate(apiModuleFolderPath string, module string, items []apiItem) (err error) {
+func (c *apiInterfaceGenerator) doGenerate(apiModuleFolderPath string, module string, items []apiItem, interfacePrefixIByVersion map[string]bool) (err error) {
 	var (
 		moduleFilePath = filepath.FromSlash(gfile.Join(apiModuleFolderPath, fmt.Sprintf(`%s.go`, module)))
 		importPathMap  = gmap.NewListMap()
@@ -74,7 +77,7 @@ func (c *apiInterfaceGenerator) doGenerate(apiModuleFolderPath string, module st
 		var (
 			method        string
 			methods       = make([]string, 0)
-			interfaceName = fmt.Sprintf(`I%s%s`, gstr.CaseCamel(item.Module), gstr.UcFirst(item.Version))
+			interfaceName = formatInterfaceTypeName(item.Module, item.Version, interfacePrefixIByVersion[item.Version])
 		)
 		for _, subItem := range subItems {
 			method = fmt.Sprintf(
@@ -97,6 +100,73 @@ func (c *apiInterfaceGenerator) doGenerate(apiModuleFolderPath string, module st
 	err = gfile.PutContents(moduleFilePath, interfaceContent)
 	mlog.Printf(`generated: %s`, gfile.RealPath(moduleFilePath))
 	return
+}
+
+func (c CGenCtrl) resolveInterfacePrefixIByVersion(
+	apiModuleFolderPath string, apiModuleApiItems []apiItem, prefixI, keepOldPrefixI bool,
+) (map[string]bool, error) {
+	interfacePrefixIByVersion := make(map[string]bool)
+	for _, item := range apiModuleApiItems {
+		if _, ok := interfacePrefixIByVersion[item.Version]; !ok {
+			interfacePrefixIByVersion[item.Version] = prefixI
+		}
+	}
+	if prefixI || !keepOldPrefixI || len(apiModuleApiItems) == 0 {
+		return interfacePrefixIByVersion, nil
+	}
+
+	existingInterfaceNames, err := c.getExistingInterfaceNames(
+		apiModuleFolderPath, apiModuleApiItems[0].Module,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for version := range interfacePrefixIByVersion {
+		if _, ok := existingInterfaceNames[formatInterfaceTypeName(apiModuleApiItems[0].Module, version, true)]; ok {
+			interfacePrefixIByVersion[version] = true
+		}
+	}
+	return interfacePrefixIByVersion, nil
+}
+
+func (c CGenCtrl) getExistingInterfaceNames(apiModuleFolderPath, module string) (map[string]struct{}, error) {
+	interfaceNames := make(map[string]struct{})
+	filePaths := []string{
+		filepath.FromSlash(gfile.Join(apiModuleFolderPath, fmt.Sprintf(`%s.go`, module))),
+		filepath.FromSlash(gfile.Join(apiModuleFolderPath, fmt.Sprintf(`%s.if.go`, module))),
+	}
+	for _, filePath := range filePaths {
+		if !gfile.Exists(filePath) {
+			continue
+		}
+		names, err := c.getInterfaceNamesInFile(filePath)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range names {
+			interfaceNames[name] = struct{}{}
+		}
+	}
+	return interfaceNames, nil
+}
+
+func (c CGenCtrl) getInterfaceNamesInFile(filePath string) (names []string, err error) {
+	fileSet := token.NewFileSet()
+	node, err := parser.ParseFile(fileSet, "", gfile.GetContents(filePath), parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	ast.Inspect(node, func(n ast.Node) bool {
+		typeSpec, ok := n.(*ast.TypeSpec)
+		if !ok {
+			return true
+		}
+		if _, ok = typeSpec.Type.(*ast.InterfaceType); ok {
+			names = append(names, typeSpec.Name.Name)
+		}
+		return true
+	})
+	return names, nil
 }
 
 func (c *apiInterfaceGenerator) getSubItemsByModule(items []apiItem, module string) (subItems []apiItem) {

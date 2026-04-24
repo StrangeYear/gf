@@ -26,14 +26,16 @@ const (
 	CGenCtrlEg     = `
 gf gen ctrl
 `
-	CGenCtrlBriefSrcFolder     = `source folder path to be parsed. default: api`
-	CGenCtrlBriefDstFolder     = `destination folder path storing automatically generated go files. default: internal/controller`
-	CGenCtrlBriefWatchFile     = `used in file watcher, it re-generates go files only if given file is under srcFolder`
-	CGenCtrlBriefSdkPath       = `also generate SDK go files for api definitions to specified directory`
-	CGenCtrlBriefSdkStdVersion = `use standard version prefix for generated sdk request path`
-	CGenCtrlBriefSdkNoV1       = `do not add version suffix for interface module name if version is v1`
-	CGenCtrlBriefClear         = `auto delete generated and unimplemented controller go files if api definitions are missing`
-	CGenCtrlControllerMerge    = `generate all controller files into one go file by name of api definition source go file`
+	CGenCtrlBriefSrcFolder      = `source folder path to be parsed. default: api`
+	CGenCtrlBriefDstFolder      = `destination folder path storing automatically generated go files. default: internal/controller`
+	CGenCtrlBriefWatchFile      = `used in file watcher, it re-generates go files only if given file is under srcFolder`
+	CGenCtrlBriefSdkPath        = `also generate SDK go files for api definitions to specified directory`
+	CGenCtrlBriefSdkStdVersion  = `use standard version prefix for generated sdk request path`
+	CGenCtrlBriefSdkNoV1        = `do not add version suffix for interface module name if version is v1`
+	CGenCtrlBriefPrefixI        = `whether generated interface names start with "I". default: true`
+	CGenCtrlBriefKeepOldPrefixI = `when prefixI=false and old "I"-prefixed interfaces already exist, keep using the old interface names. default: true`
+	CGenCtrlBriefClear          = `auto delete generated and unimplemented controller go files if api definitions are missing`
+	CGenCtrlControllerMerge     = `generate all controller files into one go file by name of api definition source go file`
 )
 
 const (
@@ -46,33 +48,37 @@ const (
 
 func init() {
 	gtag.Sets(g.MapStrStr{
-		`CGenCtrlConfig`:             CGenCtrlConfig,
-		`CGenCtrlUsage`:              CGenCtrlUsage,
-		`CGenCtrlBrief`:              CGenCtrlBrief,
-		`CGenCtrlEg`:                 CGenCtrlEg,
-		`CGenCtrlBriefSrcFolder`:     CGenCtrlBriefSrcFolder,
-		`CGenCtrlBriefDstFolder`:     CGenCtrlBriefDstFolder,
-		`CGenCtrlBriefWatchFile`:     CGenCtrlBriefWatchFile,
-		`CGenCtrlBriefSdkPath`:       CGenCtrlBriefSdkPath,
-		`CGenCtrlBriefSdkStdVersion`: CGenCtrlBriefSdkStdVersion,
-		`CGenCtrlBriefSdkNoV1`:       CGenCtrlBriefSdkNoV1,
-		`CGenCtrlBriefClear`:         CGenCtrlBriefClear,
-		`CGenCtrlControllerMerge`:    CGenCtrlControllerMerge,
+		`CGenCtrlConfig`:              CGenCtrlConfig,
+		`CGenCtrlUsage`:               CGenCtrlUsage,
+		`CGenCtrlBrief`:               CGenCtrlBrief,
+		`CGenCtrlEg`:                  CGenCtrlEg,
+		`CGenCtrlBriefSrcFolder`:      CGenCtrlBriefSrcFolder,
+		`CGenCtrlBriefDstFolder`:      CGenCtrlBriefDstFolder,
+		`CGenCtrlBriefWatchFile`:      CGenCtrlBriefWatchFile,
+		`CGenCtrlBriefSdkPath`:        CGenCtrlBriefSdkPath,
+		`CGenCtrlBriefSdkStdVersion`:  CGenCtrlBriefSdkStdVersion,
+		`CGenCtrlBriefSdkNoV1`:        CGenCtrlBriefSdkNoV1,
+		`CGenCtrlBriefPrefixI`:        CGenCtrlBriefPrefixI,
+		`CGenCtrlBriefKeepOldPrefixI`: CGenCtrlBriefKeepOldPrefixI,
+		`CGenCtrlBriefClear`:          CGenCtrlBriefClear,
+		`CGenCtrlControllerMerge`:     CGenCtrlControllerMerge,
 	})
 }
 
 type (
 	CGenCtrl      struct{}
 	CGenCtrlInput struct {
-		g.Meta        `name:"ctrl" config:"{CGenCtrlConfig}" usage:"{CGenCtrlUsage}" brief:"{CGenCtrlBrief}" eg:"{CGenCtrlEg}"`
-		SrcFolder     string `short:"s" name:"srcFolder"     brief:"{CGenCtrlBriefSrcFolder}" d:"api"`
-		DstFolder     string `short:"d" name:"dstFolder"     brief:"{CGenCtrlBriefDstFolder}" d:"internal/controller"`
-		WatchFile     string `short:"w" name:"watchFile"     brief:"{CGenCtrlBriefWatchFile}"`
-		SdkPath       string `short:"k" name:"sdkPath"       brief:"{CGenCtrlBriefSdkPath}"`
-		SdkStdVersion bool   `short:"v" name:"sdkStdVersion" brief:"{CGenCtrlBriefSdkStdVersion}" orphan:"true"`
-		SdkNoV1       bool   `short:"n" name:"sdkNoV1"       brief:"{CGenCtrlBriefSdkNoV1}" orphan:"true"`
-		Clear         bool   `short:"c" name:"clear"         brief:"{CGenCtrlBriefClear}" orphan:"true"`
-		Merge         bool   `short:"m" name:"merge"         brief:"{CGenCtrlControllerMerge}" orphan:"true"`
+		g.Meta         `name:"ctrl" config:"{CGenCtrlConfig}" usage:"{CGenCtrlUsage}" brief:"{CGenCtrlBrief}" eg:"{CGenCtrlEg}"`
+		SrcFolder      string `short:"s" name:"srcFolder"     brief:"{CGenCtrlBriefSrcFolder}" d:"api"`
+		DstFolder      string `short:"d" name:"dstFolder"     brief:"{CGenCtrlBriefDstFolder}" d:"internal/controller"`
+		WatchFile      string `short:"w" name:"watchFile"     brief:"{CGenCtrlBriefWatchFile}"`
+		SdkPath        string `short:"k" name:"sdkPath"       brief:"{CGenCtrlBriefSdkPath}"`
+		SdkStdVersion  bool   `short:"v" name:"sdkStdVersion" brief:"{CGenCtrlBriefSdkStdVersion}" orphan:"true"`
+		SdkNoV1        bool   `short:"n" name:"sdkNoV1"       brief:"{CGenCtrlBriefSdkNoV1}" orphan:"true"`
+		PrefixI        bool   `name:"prefixI" brief:"{CGenCtrlBriefPrefixI}" d:"true"`
+		KeepOldPrefixI bool   `name:"keepOldPrefixI" brief:"{CGenCtrlBriefKeepOldPrefixI}" d:"true"`
+		Clear          bool   `short:"c" name:"clear"         brief:"{CGenCtrlBriefClear}" orphan:"true"`
+		Merge          bool   `short:"m" name:"merge"         brief:"{CGenCtrlControllerMerge}" orphan:"true"`
 	}
 	CGenCtrlOutput struct{}
 )
@@ -80,7 +86,7 @@ type (
 func (c CGenCtrl) Ctrl(ctx context.Context, in CGenCtrlInput) (out *CGenCtrlOutput, err error) {
 	if in.WatchFile != "" {
 		err = c.generateByWatchFile(
-			in.WatchFile, in.SdkPath, in.SdkStdVersion, in.SdkNoV1, in.Clear, in.Merge,
+			in.WatchFile, in.SdkPath, in.SdkStdVersion, in.SdkNoV1, in.PrefixI, in.KeepOldPrefixI, in.Clear, in.Merge,
 		)
 		mlog.Print(`done!`)
 		return
@@ -99,7 +105,7 @@ func (c CGenCtrl) Ctrl(ctx context.Context, in CGenCtrlInput) (out *CGenCtrlOutp
 	return
 }
 
-func (c CGenCtrl) generateByWatchFile(watchFile, sdkPath string, sdkStdVersion, sdkNoV1, clear, merge bool) (err error) {
+func (c CGenCtrl) generateByWatchFile(watchFile, sdkPath string, sdkStdVersion, sdkNoV1, prefixI, keepOldPrefixI, clear, merge bool) (err error) {
 	// File lock to avoid multiple processes.
 	var (
 		flockFilePath = gfile.Temp("gf.cli.gen.service.lock")
@@ -142,7 +148,7 @@ func (c CGenCtrl) generateByWatchFile(watchFile, sdkPath string, sdkStdVersion, 
 		dstModuleFolderPath = gfile.Join(projectRootPath, "internal", "controller", module)
 	)
 	return c.generateByModule(
-		apiModuleFolderPath, dstModuleFolderPath, sdkPath, sdkStdVersion, sdkNoV1, clear, merge,
+		apiModuleFolderPath, dstModuleFolderPath, sdkPath, sdkStdVersion, sdkNoV1, prefixI, keepOldPrefixI, clear, merge,
 	)
 }
 
@@ -187,7 +193,7 @@ func (c CGenCtrl) generateByModules(in CGenCtrlInput) (err error) {
 		)
 		err = c.generateByModule(
 			moduleFolder, dstModuleFolderPath, in.SdkPath,
-			in.SdkStdVersion, in.SdkNoV1, in.Clear, in.Merge,
+			in.SdkStdVersion, in.SdkNoV1, in.PrefixI, in.KeepOldPrefixI, in.Clear, in.Merge,
 		)
 		if err != nil {
 			return err
@@ -199,7 +205,7 @@ func (c CGenCtrl) generateByModules(in CGenCtrlInput) (err error) {
 // parseApiModule parses certain api and generate associated go files by certain module, not all api modules.
 func (c CGenCtrl) generateByModule(
 	apiModuleFolderPath, dstModuleFolderPath, sdkPath string,
-	sdkStdVersion, sdkNoV1, clear, merge bool,
+	sdkStdVersion, sdkNoV1, prefixI, keepOldPrefixI, clear, merge bool,
 ) (err error) {
 	// parse src and dst folder go files.
 	apiItemsInSrc, err := c.getApiItemsInSrc(apiModuleFolderPath)
@@ -210,9 +216,15 @@ func (c CGenCtrl) generateByModule(
 	if err != nil {
 		return err
 	}
+	interfacePrefixIByVersion, err := c.resolveInterfacePrefixIByVersion(
+		apiModuleFolderPath, apiItemsInSrc, prefixI, keepOldPrefixI,
+	)
+	if err != nil {
+		return err
+	}
 
 	// generate api interface go files.
-	if err = newApiInterfaceGenerator().Generate(apiModuleFolderPath, apiItemsInSrc); err != nil {
+	if err = newApiInterfaceGenerator().Generate(apiModuleFolderPath, apiItemsInSrc, interfacePrefixIByVersion); err != nil {
 		return
 	}
 
@@ -232,7 +244,7 @@ func (c CGenCtrl) generateByModule(
 		toBeImplementedApiItems = append(toBeImplementedApiItems, item)
 	}
 	if len(toBeImplementedApiItems) > 0 {
-		err = newControllerGenerator().Generate(dstModuleFolderPath, toBeImplementedApiItems, merge)
+		err = newControllerGenerator().Generate(dstModuleFolderPath, toBeImplementedApiItems, interfacePrefixIByVersion, merge)
 		if err != nil {
 			return
 		}
