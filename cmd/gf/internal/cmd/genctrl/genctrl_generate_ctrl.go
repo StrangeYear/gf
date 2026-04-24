@@ -176,8 +176,7 @@ func (c *controllerGenerator) doGenerateCtrlMergeItem(dstModuleFolderPath string
 		module     string
 		version    string
 		importPath string
-		// Each ctrlFileItem has multiple CTRLs
-		controllers strings.Builder
+		apis       []apiItem
 	}
 	// It is possible that there are multiple files under one module
 	ctrlFileItemMap := make(map[string]*controllerFileItem)
@@ -186,32 +185,14 @@ func (c *controllerGenerator) doGenerateCtrlMergeItem(dstModuleFolderPath string
 		ctrlFileItem, found := ctrlFileItemMap[api.FileName]
 		if !found {
 			ctrlFileItem = &controllerFileItem{
-				module:      api.Module,
-				version:     api.Version,
-				controllers: strings.Builder{},
-				importPath:  api.Import,
+				module:     api.Module,
+				version:    api.Version,
+				importPath: api.Import,
+				apis:       make([]apiItem, 0),
 			}
 			ctrlFileItemMap[api.FileName] = ctrlFileItem
 		}
-
-		ctrlName := fmt.Sprintf(`Controller%s`, gstr.UcFirst(api.Version))
-		ctrl := gstr.TrimLeft(gstr.ReplaceByMap(consts.TemplateGenCtrlControllerMethodFuncMerge, g.MapStrStr{
-			"{Module}":        api.Module,
-			"{CtrlName}":      ctrlName,
-			"{Version}":       api.Version,
-			"{MethodName}":    api.MethodName,
-			"{MethodComment}": api.GetComment(),
-		}))
-
-		ctrlFilePath := gfile.Join(dstModuleFolderPath, fmt.Sprintf(
-			`%s_%s_%s.go`, ctrlFileItem.module, ctrlFileItem.version, api.FileName,
-		))
-		// Use AST-based checking for more accurate method detection
-		if methodExists(ctrlFilePath, ctrlName, api.MethodName) {
-			return
-		}
-
-		ctrlFileItem.controllers.WriteString(ctrl)
+		ctrlFileItem.apis = append(ctrlFileItem.apis, api)
 		doneApiSet.Add(api.String())
 	}
 
@@ -219,26 +200,95 @@ func (c *controllerGenerator) doGenerateCtrlMergeItem(dstModuleFolderPath string
 		ctrlFilePath := gfile.Join(dstModuleFolderPath, fmt.Sprintf(
 			`%s_%s_%s.go`, ctrlFileItem.module, ctrlFileItem.version, ctrlFileName,
 		))
+		ctrlName := fmt.Sprintf(`Controller%s`, gstr.UcFirst(ctrlFileItem.version))
 
-		// This logic is only followed when a new ctrlFileItem is generated
-		// Most of the rest of the time, the following logic is followed
 		if !gfile.Exists(ctrlFilePath) {
 			ctrlFileHeader := gstr.TrimLeft(gstr.ReplaceByMap(consts.TemplateGenCtrlControllerHeader, g.MapStrStr{
 				"{Module}":     ctrlFileItem.module,
 				"{ImportPath}": ctrlFileItem.importPath,
 			}))
-			err = gfile.PutContents(ctrlFilePath, ctrlFileHeader)
+			ctrlFileContent := ctrlFileHeader
+			for _, api := range ctrlFileItem.apis {
+				ctrlFileContent += c.generateMergeCtrlMethod(ctrlName, api)
+			}
+			err = gfile.PutContents(ctrlFilePath, ctrlFileContent)
 			if err != nil {
 				return err
 			}
-		}
-
-		if err = gfile.PutContentsAppend(ctrlFilePath, ctrlFileItem.controllers.String()); err != nil {
-			return err
+		} else {
+			var updated bool
+			updated, err = c.insertMissingMergeCtrlMethods(ctrlFilePath, ctrlName, ctrlFileItem.apis)
+			if err != nil {
+				return err
+			}
+			if !updated {
+				continue
+			}
 		}
 		mlog.Printf(`generated: %s`, gfile.RealPath(ctrlFilePath))
 	}
 	return
+}
+
+func (c *controllerGenerator) generateMergeCtrlMethod(ctrlName string, api apiItem) string {
+	return gstr.TrimLeft(gstr.ReplaceByMap(consts.TemplateGenCtrlControllerMethodFuncMerge, g.MapStrStr{
+		"{Module}":        api.Module,
+		"{CtrlName}":      ctrlName,
+		"{Version}":       api.Version,
+		"{MethodName}":    api.MethodName,
+		"{MethodComment}": api.GetComment(),
+	}))
+}
+
+func (c *controllerGenerator) insertMissingMergeCtrlMethods(ctrlFilePath, ctrlName string, apiItems []apiItem) (updated bool, err error) {
+	content := gfile.GetContents(ctrlFilePath)
+	methodOffsets, err := getMethodStartOffsets(ctrlFilePath, ctrlName)
+	if err != nil {
+		return false, err
+	}
+
+	type insertion struct {
+		offset int
+		text   string
+	}
+	insertions := make([]insertion, 0)
+	var missingMethods strings.Builder
+	for _, api := range apiItems {
+		if offset, ok := methodOffsets[api.MethodName]; ok {
+			if missingMethods.Len() > 0 {
+				insertions = append(insertions, insertion{
+					offset: offset,
+					text:   missingMethods.String(),
+				})
+				missingMethods.Reset()
+			}
+			continue
+		}
+		missingMethods.WriteString(c.generateMergeCtrlMethod(ctrlName, api))
+		updated = true
+	}
+	if missingMethods.Len() > 0 {
+		insertions = append(insertions, insertion{
+			offset: len(content),
+			text:   missingMethods.String(),
+		})
+	}
+	if !updated {
+		return false, nil
+	}
+
+	var builder strings.Builder
+	lastOffset := 0
+	for _, item := range insertions {
+		builder.WriteString(content[lastOffset:item.offset])
+		builder.WriteString(item.text)
+		lastOffset = item.offset
+	}
+	builder.WriteString(content[lastOffset:])
+	if err = gfile.PutContents(ctrlFilePath, builder.String()); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // methodExists checks if a method with the given receiver type and name exists in the file.
@@ -310,4 +360,39 @@ func functionExists(filePath, funcName string) bool {
 		}
 	}
 	return false
+}
+
+func getMethodStartOffsets(filePath, ctrlName string) (map[string]int, error) {
+	content := gfile.GetContents(filePath)
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filePath, content, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+
+	methodOffsets := make(map[string]int)
+	for _, decl := range node.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok || funcDecl.Recv == nil || len(funcDecl.Recv.List) == 0 {
+			continue
+		}
+		recvType := ""
+		switch t := funcDecl.Recv.List[0].Type.(type) {
+		case *ast.StarExpr:
+			if ident, ok := t.X.(*ast.Ident); ok {
+				recvType = ident.Name
+			}
+		case *ast.Ident:
+			recvType = t.Name
+		}
+		if recvType != ctrlName {
+			continue
+		}
+		pos := funcDecl.Pos()
+		if funcDecl.Doc != nil {
+			pos = funcDecl.Doc.Pos()
+		}
+		methodOffsets[funcDecl.Name.Name] = fset.Position(pos).Offset
+	}
+	return methodOffsets, nil
 }

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gogf/gf/v2/container/gset"
 )
 
 func TestDoGenerateCtrlNewByModuleAndVersionSkipsExistingNewFunc(t *testing.T) {
@@ -129,5 +131,114 @@ type IUserV1 interface {
 	}
 	if !strings.Contains(string(content), "func NewV1() user.IUserV1") {
 		t.Fatalf("generated file does not keep legacy I-prefixed interface return type:\n%s", string(content))
+	}
+}
+
+func TestDoGenerateCtrlMergeItemPreservesApiOrderWhenInsertingMissingMethods(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	ctrlFilePath := filepath.Join(dir, "user_v1_profile.go")
+	original := strings.TrimLeft(`
+package user
+
+import (
+	"context"
+
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"example.com/api/user/v1"
+)
+
+// GetProfile keeps existing implementation.
+func (c *ControllerV1) GetProfile(ctx context.Context, req *v1.GetProfileReq) (res *v1.GetProfileRes, err error) {
+	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+}
+`, "\n")
+	if err := os.WriteFile(ctrlFilePath, []byte(original), 0644); err != nil {
+		t.Fatalf("write merged controller file: %v", err)
+	}
+
+	apiItems := []apiItem{
+		{Import: "example.com/api/user/v1", FileName: "profile", Module: "user", Version: "v1", MethodName: "GetList"},
+		{Import: "example.com/api/user/v1", FileName: "profile", Module: "user", Version: "v1", MethodName: "Create"},
+		{Import: "example.com/api/user/v1", FileName: "profile", Module: "user", Version: "v1", MethodName: "GetProfile", Comment: "keeps existing implementation."},
+	}
+
+	err := newControllerGenerator().doGenerateCtrlMergeItem(dir, apiItems, gset.NewStrSet())
+	if err != nil {
+		t.Fatalf("generate merged controller methods: %v", err)
+	}
+
+	content, err := os.ReadFile(ctrlFilePath)
+	if err != nil {
+		t.Fatalf("read merged controller file: %v", err)
+	}
+	text := string(content)
+
+	getListIndex := strings.Index(text, "func (c *ControllerV1) GetList")
+	createIndex := strings.Index(text, "func (c *ControllerV1) Create")
+	getProfileIndex := strings.Index(text, "func (c *ControllerV1) GetProfile")
+	if !(getListIndex >= 0 && createIndex >= 0 && getProfileIndex >= 0) {
+		t.Fatalf("expected merged file to contain all controller methods:\n%s", text)
+	}
+	if !(getListIndex < createIndex && createIndex < getProfileIndex) {
+		t.Fatalf("expected generated methods to follow api definition order:\n%s", text)
+	}
+	if strings.Count(text, "func (c *ControllerV1) GetProfile") != 1 {
+		t.Fatalf("expected existing method to be kept without duplication:\n%s", text)
+	}
+	if !strings.Contains(text, "// GetProfile keeps existing implementation.") {
+		t.Fatalf("expected existing method implementation to be preserved:\n%s", text)
+	}
+}
+
+func TestDoGenerateCtrlMergeItemSkipsWhenAllMethodsExist(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	ctrlFilePath := filepath.Join(dir, "user_v1_profile.go")
+	original := strings.TrimLeft(`
+package user
+
+import (
+	"context"
+
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
+
+	"example.com/api/user/v1"
+)
+
+func (c *ControllerV1) GetList(ctx context.Context, req *v1.GetListReq) (res *v1.GetListRes, err error) {
+	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+}
+
+// GetProfile keeps existing implementation.
+func (c *ControllerV1) GetProfile(ctx context.Context, req *v1.GetProfileReq) (res *v1.GetProfileRes, err error) {
+	return nil, gerror.NewCode(gcode.CodeNotImplemented)
+}
+`, "\n")
+	if err := os.WriteFile(ctrlFilePath, []byte(original), 0644); err != nil {
+		t.Fatalf("write merged controller file: %v", err)
+	}
+
+	apiItems := []apiItem{
+		{Import: "example.com/api/user/v1", FileName: "profile", Module: "user", Version: "v1", MethodName: "GetList"},
+		{Import: "example.com/api/user/v1", FileName: "profile", Module: "user", Version: "v1", MethodName: "GetProfile", Comment: "keeps existing implementation."},
+	}
+
+	err := newControllerGenerator().doGenerateCtrlMergeItem(dir, apiItems, gset.NewStrSet())
+	if err != nil {
+		t.Fatalf("generate merged controller methods: %v", err)
+	}
+
+	content, err := os.ReadFile(ctrlFilePath)
+	if err != nil {
+		t.Fatalf("read merged controller file: %v", err)
+	}
+	if string(content) != original {
+		t.Fatalf("expected merged controller file to remain unchanged when all methods exist:\n%s", string(content))
 	}
 }
