@@ -120,6 +120,9 @@ func (c CGenService) Service(ctx context.Context, in CGenServiceInput) (out *CGe
 	in.SrcFolder = gstr.TrimRight(in.SrcFolder, `/`)
 	in.WatchFile = filepath.ToSlash(in.WatchFile)
 	in.WatchFile = gstr.TrimRight(in.WatchFile, `/`)
+	if !in.PrefixI && in.GenerateInstance {
+		return nil, fmt.Errorf(`invalid options: generateInstance must be false when prefixI=false`)
+	}
 
 	// Watch file handling.
 	if in.WatchFile != "" {

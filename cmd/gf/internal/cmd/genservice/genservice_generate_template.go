@@ -115,9 +115,5 @@ func (c CGenService) getInterfaceName(in CGenServiceInput, structName string) st
 }
 
 func (c CGenService) getGetterName(in CGenServiceInput, structName string) string {
-	if in.PrefixI {
-		return structName
-	}
-	// Without the `I` prefix, `func User() User` would conflict with the interface declaration.
-	return "Get" + structName
+	return structName
 }
