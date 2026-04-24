@@ -229,3 +229,56 @@ type BaseProfileRes struct{}
 		t.Fatalf("expected sibling aliased response struct to pass validation, got: %v", err)
 	}
 }
+
+func TestGetStructsNameInSrcAllowsDefinedResponseStructFromImportedPackage(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	goModContent := strings.TrimLeft(`
+module example.com/test
+
+go 1.23.0
+
+require github.com/gogf/gf/v2 v2.10.0
+`, "\n")
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goModContent), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	voDir := filepath.Join(dir, "vo")
+	if err := os.MkdirAll(voDir, 0755); err != nil {
+		t.Fatalf("create vo dir: %v", err)
+	}
+	voContent := strings.TrimLeft(`
+package vo
+
+type NavigationConfig struct{}
+`, "\n")
+	if err := os.WriteFile(filepath.Join(voDir, "navigation.go"), []byte(voContent), 0644); err != nil {
+		t.Fatalf("write vo file: %v", err)
+	}
+
+	filePath := filepath.Join(dir, "user.go")
+	content := strings.TrimLeft(`
+package v1
+
+import (
+	"github.com/gogf/gf/v2/frame/g"
+	"example.com/test/vo"
+)
+
+type GetUserNavigationsReq struct {
+	g.Meta `+"`path:\"/users/navigations\" method:\"get\"`"+`
+}
+
+type GetUserNavigationsRes vo.NavigationConfig
+`, "\n")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("write api definition file: %v", err)
+	}
+
+	_, err := (CGenCtrl{}).getStructsNameInSrc(filePath)
+	if err != nil {
+		t.Fatalf("expected imported response type to pass validation, got: %v", err)
+	}
+}
