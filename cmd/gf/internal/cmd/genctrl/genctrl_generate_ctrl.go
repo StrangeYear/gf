@@ -78,13 +78,12 @@ func (c *controllerGenerator) doGenerateCtrlNewByModuleAndVersion(
 	dstModuleFolderPath, module, version, importPath string,
 ) (err error) {
 	var (
-		moduleFilePath        = filepath.FromSlash(gfile.Join(dstModuleFolderPath, module+".go"))
-		moduleFilePathNew     = filepath.FromSlash(gfile.Join(dstModuleFolderPath, module+"_new.go"))
-		ctrlName              = fmt.Sprintf(`Controller%s`, gstr.UcFirst(version))
-		interfaceName         = fmt.Sprintf(`%s.I%s%s`, module, gstr.CaseCamel(module), gstr.UcFirst(version))
-		newFuncName           = fmt.Sprintf(`New%s`, gstr.UcFirst(version))
-		newFuncNameDefinition = fmt.Sprintf(`func %s()`, newFuncName)
-		alreadyCreated        bool
+		moduleFilePath    = filepath.FromSlash(gfile.Join(dstModuleFolderPath, module+".go"))
+		moduleFilePathNew = filepath.FromSlash(gfile.Join(dstModuleFolderPath, module+"_new.go"))
+		ctrlName          = fmt.Sprintf(`Controller%s`, gstr.UcFirst(version))
+		interfaceName     = fmt.Sprintf(`%s.I%s%s`, module, gstr.CaseCamel(module), gstr.UcFirst(version))
+		newFuncName       = fmt.Sprintf(`New%s`, gstr.UcFirst(version))
+		alreadyCreated    bool
 	)
 	if !gfile.Exists(moduleFilePath) {
 		content := gstr.ReplaceByMap(consts.TemplateGenCtrlControllerEmpty, g.MapStrStr{
@@ -95,27 +94,27 @@ func (c *controllerGenerator) doGenerateCtrlNewByModuleAndVersion(
 		}
 		mlog.Printf(`generated: %s`, gfile.RealPath(moduleFilePath))
 	}
-	if !gfile.Exists(moduleFilePathNew) {
-		content := gstr.ReplaceByMap(consts.TemplateGenCtrlControllerNewEmpty, g.MapStrStr{
-			"{Module}":     module,
-			"{ImportPath}": fmt.Sprintf(`"%s"`, importPath),
-		})
-		if err = gfile.PutContents(moduleFilePathNew, gstr.TrimLeft(content)); err != nil {
-			return err
-		}
-		mlog.Printf(`generated: %s`, gfile.RealPath(moduleFilePathNew))
-	}
 	filePaths, err := gfile.ScanDir(dstModuleFolderPath, "*.go", false)
 	if err != nil {
 		return err
 	}
 	for _, filePath := range filePaths {
-		if gstr.Contains(gfile.GetContents(filePath), newFuncNameDefinition) {
+		if functionExists(filePath, newFuncName) {
 			alreadyCreated = true
 			break
 		}
 	}
 	if !alreadyCreated {
+		if !gfile.Exists(moduleFilePathNew) {
+			content := gstr.ReplaceByMap(consts.TemplateGenCtrlControllerNewEmpty, g.MapStrStr{
+				"{Module}":     module,
+				"{ImportPath}": fmt.Sprintf(`"%s"`, importPath),
+			})
+			if err = gfile.PutContents(moduleFilePathNew, gstr.TrimLeft(content)); err != nil {
+				return err
+			}
+			mlog.Printf(`generated: %s`, gfile.RealPath(moduleFilePathNew))
+		}
 		content := gstr.ReplaceByMap(consts.TemplateGenCtrlControllerNewFunc, g.MapStrStr{
 			"{CtrlName}":      ctrlName,
 			"{NewFuncName}":   newFuncName,
@@ -275,6 +274,27 @@ func methodExists(filePath, ctrlName, methodName string) bool {
 			if recvType == ctrlName && funcDecl.Name.Name == methodName {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// functionExists checks if a plain function with the given name exists in the file.
+// It uses AST parsing so formatting differences, including multi-line signatures,
+// do not trigger duplicate generation.
+func functionExists(filePath, funcName string) bool {
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+	if err != nil {
+		return false
+	}
+	for _, decl := range node.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok || funcDecl.Recv != nil {
+			continue
+		}
+		if funcDecl.Name.Name == funcName {
+			return true
 		}
 	}
 	return false
