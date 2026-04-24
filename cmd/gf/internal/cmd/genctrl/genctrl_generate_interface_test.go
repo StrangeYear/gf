@@ -17,6 +17,7 @@ func TestApiInterfaceGeneratorRespectsPrefixI(t *testing.T) {
 			Module:     "user",
 			Version:    "v1",
 			MethodName: "GetProfile",
+			Comment:    "gets profile information\nwith multiline description",
 		},
 	}
 
@@ -35,6 +36,12 @@ func TestApiInterfaceGeneratorRespectsPrefixI(t *testing.T) {
 	}
 	if strings.Contains(text, "type IUserV1 interface {") {
 		t.Fatalf("generated file still contains I-prefixed interface name:\n%s", text)
+	}
+	if !strings.Contains(text, "\t// GetProfile gets profile information") {
+		t.Fatalf("generated file does not contain interface method comment:\n%s", text)
+	}
+	if !strings.Contains(text, "\t// with multiline description") {
+		t.Fatalf("generated file does not contain multiline interface method comment:\n%s", text)
 	}
 }
 

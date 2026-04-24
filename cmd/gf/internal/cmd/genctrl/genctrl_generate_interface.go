@@ -80,6 +80,9 @@ func (c *apiInterfaceGenerator) doGenerate(apiModuleFolderPath string, module st
 			interfaceName = formatInterfaceTypeName(item.Module, item.Version, interfacePrefixIByVersion[item.Version])
 		)
 		for _, subItem := range subItems {
+			if comment := subItem.GetInterfaceComment(); comment != "" {
+				methods = append(methods, comment)
+			}
 			method = fmt.Sprintf(
 				"\t%s(ctx context.Context, req *%s.%sReq) (res *%s.%sRes, err error)",
 				subItem.MethodName, subItem.Version, subItem.MethodName, subItem.Version, subItem.MethodName,

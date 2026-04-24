@@ -8,6 +8,7 @@ package genctrl
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gogf/gf/v2/text/gstr"
 )
@@ -32,6 +33,35 @@ func (a apiItem) GetComment() string {
 	if a.Comment == "" {
 		return ""
 	}
-	// format for handling comments
-	return fmt.Sprintf("\n// %s %s", a.MethodName, a.Comment)
+	return formatMethodComment(a.MethodName, a.Comment, "")
+}
+
+// GetInterfaceComment returns the comment for an interface method.
+func (a apiItem) GetInterfaceComment() string {
+	if a.Comment == "" {
+		return ""
+	}
+	return formatMethodComment(a.MethodName, a.Comment, "\t")
+}
+
+func formatMethodComment(methodName, comment, indent string) string {
+	lines := strings.Split(comment, "\n")
+	var builder strings.Builder
+	firstLine := true
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		builder.WriteString("\n")
+		builder.WriteString(indent)
+		builder.WriteString("// ")
+		if firstLine {
+			builder.WriteString(fmt.Sprintf("%s %s", methodName, line))
+			firstLine = false
+		} else {
+			builder.WriteString(line)
+		}
+	}
+	return builder.String()
 }
