@@ -133,7 +133,7 @@ type GetProfileReq struct {
 	if err == nil {
 		t.Fatalf("expected missing response struct error")
 	}
-	if !strings.Contains(err.Error(), `missing response struct "GetProfileRes"`) {
+	if !strings.Contains(err.Error(), `missing response type "GetProfileRes"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -280,5 +280,34 @@ type GetUserNavigationsRes vo.NavigationConfig
 	_, err := (CGenCtrl{}).getStructsNameInSrc(filePath)
 	if err != nil {
 		t.Fatalf("expected imported response type to pass validation, got: %v", err)
+	}
+}
+
+func TestGetStructsNameInSrcAllowsNonStructResponseType(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "user.go")
+	content := strings.TrimLeft(`
+package v1
+
+import (
+	"github.com/gogf/gf/v2/frame/g"
+	"example.com/test/entity"
+)
+
+type HotKnowledgeReq struct {
+	g.Meta `+"`path:\"/knowledge/hot\" method:\"get\"`"+`
+}
+
+type HotKnowledgeRes []*entity.KnowledgeBase
+`, "\n")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("write api definition file: %v", err)
+	}
+
+	_, err := (CGenCtrl{}).getStructsNameInSrc(filePath)
+	if err != nil {
+		t.Fatalf("expected non-struct response type to pass validation, got: %v", err)
 	}
 }

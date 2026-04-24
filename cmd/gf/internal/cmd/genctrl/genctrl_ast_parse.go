@@ -13,12 +13,10 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
-	"go/types"
 	"sync"
 
 	"github.com/gogf/gf/v2/os/gfile"
 	"github.com/gogf/gf/v2/text/gstr"
-	"golang.org/x/tools/go/packages"
 )
 
 type structInfo struct {
@@ -31,14 +29,8 @@ type typeSpecCacheValue struct {
 	err         error
 }
 
-type typesPackageCacheValue struct {
-	typesPkg *types.Package
-	err      error
-}
-
 var (
-	typeSpecCache     sync.Map
-	typesPackageCache sync.Map
+	typeSpecCache sync.Map
 )
 
 // getStructsNameInSrc retrieves all struct names and comment
@@ -57,7 +49,6 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 	if err != nil {
 		return nil, err
 	}
-	var typesPkg *types.Package
 
 	ast.Inspect(node, func(n ast.Node) bool {
 		if typeSpec, ok := n.(*ast.TypeSpec); ok {
@@ -76,14 +67,9 @@ func (c CGenCtrl) getStructsNameInSrc(filePath string) (structInfos []*structInf
 					return true
 				}
 				resStructName := gstr.TrimRightStr(structName, "Req", 1) + "Res"
-				structLikeInAST := c.isStructLikeType(typeSpecMap, resStructName, make(map[string]struct{}))
-				if !structLikeInAST && typesPkg == nil {
-					typesPkg, _ = c.getTypesPackageInDir(gfile.Dir(filePath), node.Name.Name)
-				}
-				if !structLikeInAST &&
-					!c.isStructLikeGoPackageType(typesPkg, resStructName, make(map[types.Type]struct{})) {
+				if _, ok = typeSpecMap[resStructName]; !ok {
 					err = fmt.Errorf(
-						`missing response struct "%s" for request struct "%s" in file "%s"`,
+						`missing response type "%s" for request struct "%s" in file "%s"`,
 						resStructName, structName, filePath,
 					)
 					return false
@@ -139,101 +125,6 @@ func (c CGenCtrl) getTypeSpecsInPackage(dirPath, packageName string) (typeSpecMa
 	}
 	typeSpecCache.Store(cacheKey, typeSpecCacheValue{typeSpecMap: typeSpecMap})
 	return typeSpecMap, nil
-}
-
-func (c CGenCtrl) getTypesPackageInDir(dirPath, packageName string) (typesPkg *types.Package, err error) {
-	cacheKey := dirPath + "\n" + packageName
-	if value, ok := typesPackageCache.Load(cacheKey); ok {
-		cacheValue := value.(typesPackageCacheValue)
-		return cacheValue.typesPkg, cacheValue.err
-	}
-	var pkgs []*packages.Package
-	pkgs, err = packages.Load(&packages.Config{
-		Dir: dirPath,
-		Mode: packages.NeedName |
-			packages.NeedTypes |
-			packages.NeedImports |
-			packages.NeedDeps,
-	}, ".")
-	if err != nil {
-		typesPackageCache.Store(cacheKey, typesPackageCacheValue{err: err})
-		return nil, err
-	}
-	for _, pkg := range pkgs {
-		if pkg != nil && pkg.Name == packageName && pkg.Types != nil {
-			typesPackageCache.Store(cacheKey, typesPackageCacheValue{typesPkg: pkg.Types})
-			return pkg.Types, nil
-		}
-	}
-	typesPackageCache.Store(cacheKey, typesPackageCacheValue{})
-	return nil, nil
-}
-
-func (c CGenCtrl) isStructLikeType(typeSpecMap map[string]*ast.TypeSpec, typeName string, visited map[string]struct{}) bool {
-	if _, ok := visited[typeName]; ok {
-		return false
-	}
-	typeSpec, ok := typeSpecMap[typeName]
-	if !ok {
-		return false
-	}
-	visited[typeName] = struct{}{}
-	return c.isStructLikeExpr(typeSpecMap, typeSpec.Type, visited)
-}
-
-func (c CGenCtrl) isStructLikeExpr(typeSpecMap map[string]*ast.TypeSpec, expr ast.Expr, visited map[string]struct{}) bool {
-	switch expr := expr.(type) {
-	case *ast.StructType:
-		return true
-
-	case *ast.Ident:
-		return c.isStructLikeType(typeSpecMap, expr.Name, visited)
-
-	case *ast.IndexExpr:
-		return c.isStructLikeExpr(typeSpecMap, expr.X, visited)
-
-	case *ast.IndexListExpr:
-		return c.isStructLikeExpr(typeSpecMap, expr.X, visited)
-
-	case *ast.ParenExpr:
-		return c.isStructLikeExpr(typeSpecMap, expr.X, visited)
-	}
-	return false
-}
-
-func (c CGenCtrl) isStructLikeGoPackageType(typesPkg *types.Package, typeName string, visited map[types.Type]struct{}) bool {
-	if typesPkg == nil {
-		return false
-	}
-	obj := typesPkg.Scope().Lookup(typeName)
-	typeNameObj, ok := obj.(*types.TypeName)
-	if !ok {
-		return false
-	}
-	return c.isStructLikeGoType(typeNameObj.Type(), visited)
-}
-
-func (c CGenCtrl) isStructLikeGoType(goType types.Type, visited map[types.Type]struct{}) bool {
-	if goType == nil {
-		return false
-	}
-	goType = types.Unalias(goType)
-	if _, ok := visited[goType]; ok {
-		return false
-	}
-	visited[goType] = struct{}{}
-
-	switch value := goType.(type) {
-	case *types.Named:
-		return c.isStructLikeGoType(value.Underlying(), visited)
-
-	case *types.Struct:
-		return true
-
-	case *types.Pointer:
-		return c.isStructLikeGoType(value.Elem(), visited)
-	}
-	return false
 }
 
 // getImportsInDst retrieves all import paths in the file.
