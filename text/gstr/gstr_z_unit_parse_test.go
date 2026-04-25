@@ -179,5 +179,45 @@ func Test_Parse(t *testing.T) {
 				},
 			},
 		})
+		m, err = gstr.Parse("name=john+doe&city=New%20York")
+		t.AssertNil(err)
+		t.Assert(m, g.Map{
+			"name": "john doe",
+			"city": "New York",
+		})
+		m, err = gstr.Parse("a%5Bb%5D=1")
+		t.AssertNil(err)
+		t.Assert(m, g.Map{
+			"a": g.Map{
+				"b": "1",
+			},
+		})
+		m, err = gstr.Parse("a+b=1")
+		t.AssertNil(err)
+		t.Assert(m, g.Map{
+			"a_b": "1",
+		})
 	})
+}
+
+func Benchmark_Parse(b *testing.B) {
+	b.Run("flat", func(b *testing.B) {
+		benchmarkParse(b, "id=123&orderId=456&filter=paid&limit=10")
+	})
+	b.Run("escaped_value", func(b *testing.B) {
+		benchmarkParse(b, "name=john+doe&city=New%20York")
+	})
+	b.Run("nested", func(b *testing.B) {
+		benchmarkParse(b, "m[a1][b1][c1][d1]=1&m[a2][b2]=2&m[a3][b3][c3]=3")
+	})
+}
+
+func benchmarkParse(b *testing.B, s string) {
+	b.Helper()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := gstr.Parse(s); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

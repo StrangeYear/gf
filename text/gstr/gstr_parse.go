@@ -28,6 +28,53 @@ func Parse(s string) (result map[string]any, err error) {
 	if s == "" {
 		return nil, nil
 	}
+	if result, ok, err := parseFlat(s); ok || err != nil {
+		return result, err
+	}
+	return parseCompatible(s)
+}
+
+func parseFlat(s string) (result map[string]any, ok bool, err error) {
+	for start := 0; start <= len(s); {
+		end := strings.IndexByte(s[start:], '&')
+		if end < 0 {
+			end = len(s)
+		} else {
+			end += start
+		}
+		part := s[start:end]
+		start = end + 1
+		pos := strings.IndexByte(part, '=')
+		if pos <= 0 {
+			continue
+		}
+		key := part[:pos]
+		if isComplexParseKey(key) {
+			return nil, false, nil
+		}
+		value, err := url.QueryUnescape(part[pos+1:])
+		if err != nil {
+			err = gerror.Wrapf(err, `url.QueryUnescape failed for string "%s"`, part[pos+1:])
+			return nil, true, err
+		}
+		if result == nil {
+			result = make(map[string]any)
+		}
+		result[key] = value
+	}
+	if result == nil {
+		result = make(map[string]any)
+	}
+	return result, true, nil
+}
+
+func isComplexParseKey(key string) bool {
+	// The compatibility parser decodes and normalizes keys before building nested maps.
+	// Fall back whenever the raw key might change after decoding or normalization.
+	return strings.ContainsAny(key, " .[%+")
+}
+
+func parseCompatible(s string) (result map[string]any, err error) {
 	result = make(map[string]any)
 	parts := strings.Split(s, "&")
 	for _, part := range parts {
