@@ -84,6 +84,8 @@ type (
 		Type                     reflect.Type               // Reflect type information for current handler, which is used for extensions of the handler feature.
 		Value                    reflect.Value              // Reflect value information for current handler, which is used for extensions of the handler feature.
 		IsStrictRoute            bool                       // Whether strict route matching is enabled.
+		ReqStructType            reflect.Type               // Cached request struct type for object-style handlers.
+		ReqStructPool            *sync.Pool                 // Optional request struct pool for explicitly enabled strict handlers.
 		ReqStructFields          []gstructs.Field           // Request struct fields.
 		ReqStructDefaults        []requestStructDefaultMeta // Cached default tag metadata for strict route request structs.
 		ReqStructIn              []requestStructInMeta      // Cached header/cookie source metadata for strict route request structs.

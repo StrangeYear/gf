@@ -268,6 +268,10 @@ type ServerConfig struct {
 	// RouteComplexEnabled enables compatibility matching for complex route patterns like "{name}.json".
 	RouteComplexEnabled bool `json:"routeComplexEnabled"`
 
+	// RequestStructPoolEnabled enables pooling for strict handler request structs.
+	// It is disabled by default because handler code may retain *Req after request completion.
+	RequestStructPoolEnabled bool `json:"requestStructPoolEnabled"`
+
 	// DumpRouterMap specifies whether automatically dumps router map when server starts.
 	DumpRouterMap bool `json:"dumpRouterMap"`
 }

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/internal/utils"
@@ -20,6 +21,12 @@ import (
 	"github.com/gogf/gf/v2/os/gfile"
 	"github.com/gogf/gf/v2/os/gres"
 )
+
+var responsePool = sync.Pool{
+	New: func() any {
+		return new(Response)
+	},
+}
 
 // Response is the http response manager.
 // Note that it implements the http.ResponseWriter interface with buffering feature.
@@ -31,11 +38,21 @@ type Response struct {
 
 // newResponse creates and returns a new Response object.
 func newResponse(s *Server, w http.ResponseWriter) *Response {
-	r := &Response{
+	r := responsePool.Get().(*Response)
+	*r = Response{
 		Server:       s,
 		BufferWriter: response.NewBufferWriter(w),
 	}
 	return r
+}
+
+func releaseResponse(r *Response) {
+	if r == nil {
+		return
+	}
+	// BufferWriter.Close is handled by request shutdown; only the Response wrapper is pooled here.
+	*r = Response{}
+	responsePool.Put(r)
 }
 
 // ServeFile serves the file to the response.

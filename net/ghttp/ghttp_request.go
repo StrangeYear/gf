@@ -9,7 +9,9 @@ package ghttp
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/internal/intlog"
@@ -20,6 +22,18 @@ import (
 	"github.com/gogf/gf/v2/text/gstr"
 	"github.com/gogf/gf/v2/util/guid"
 )
+
+var requestPool = sync.Pool{
+	New: func() any {
+		return new(Request)
+	},
+}
+
+var middlewarePool = sync.Pool{
+	New: func() any {
+		return new(middleware)
+	},
+}
 
 // Request is the context object for a request.
 type Request struct {
@@ -52,6 +66,8 @@ type Request struct {
 	formMap           map[string]any       // Form parameters map, which is nil if there's no form of data from the client.
 	bodyMap           map[string]any       // Body parameters map, which might be nil if their nobody content.
 	error             error                // Current executing error of the request.
+	pooledReqStruct   any                  // Strict handler request struct borrowed from handler pool.
+	pooledReqPool     *sync.Pool           // Pool used for returning pooledReqStruct after response completion.
 	exitAll           bool                 // A bool marking whether current request is exited.
 	parsedHost        string               // The parsed host name for current host used by GetHost function.
 	clientIp          string               // The parsed client ip for current host used by GetClientIp function.
@@ -72,7 +88,8 @@ type staticFile struct {
 
 // newRequest creates and returns a new request object.
 func newRequest(s *Server, r *http.Request, w http.ResponseWriter) *Request {
-	request := &Request{
+	request := requestPool.Get().(*Request)
+	*request = Request{
 		Server:            s,
 		Request:           r,
 		Response:          newResponse(s, w),
@@ -86,9 +103,7 @@ func newRequest(s *Server, r *http.Request, w http.ResponseWriter) *Request {
 		request.incomingSessionId,
 	)
 	request.Response.Request = request
-	request.Middleware = &middleware{
-		request: request,
-	}
+	request.Middleware = newMiddleware(request)
 	// Custom session id creating function.
 	err := request.Session.SetIdFunc(func(ttl time.Duration) string {
 		var (
@@ -113,6 +128,51 @@ func newRequest(s *Server, r *http.Request, w http.ResponseWriter) *Request {
 		request.URL.Path = "/"
 	}
 	return request
+}
+
+func newMiddleware(request *Request) *middleware {
+	m := middlewarePool.Get().(*middleware)
+	*m = middleware{
+		request: request,
+	}
+	return m
+}
+
+func releaseRequest(request *Request) {
+	if request == nil {
+		return
+	}
+	releasePooledRequestStruct(request)
+	if request.Middleware != nil {
+		// Middleware objects are request-scoped and can be safely reset after the request finishes.
+		*request.Middleware = middleware{}
+		middlewarePool.Put(request.Middleware)
+	}
+	if request.Response != nil {
+		releaseResponse(request.Response)
+	}
+	// Request is large and hot; reset all references before returning it to the pool.
+	*request = Request{}
+	requestPool.Put(request)
+}
+
+func (r *Request) setPooledRequestStruct(pool *sync.Pool, object any) {
+	r.pooledReqPool = pool
+	r.pooledReqStruct = object
+}
+
+func releasePooledRequestStruct(request *Request) {
+	if request.pooledReqPool == nil || request.pooledReqStruct == nil {
+		return
+	}
+	value := reflect.ValueOf(request.pooledReqStruct)
+	if value.Kind() == reflect.Pointer && !value.IsNil() {
+		elem := value.Elem()
+		elem.Set(reflect.Zero(elem.Type()))
+	}
+	request.pooledReqPool.Put(request.pooledReqStruct)
+	request.pooledReqPool = nil
+	request.pooledReqStruct = nil
 }
 
 // WebSocket upgrades current request as a websocket request.

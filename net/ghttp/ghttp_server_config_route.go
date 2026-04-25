@@ -30,3 +30,9 @@ func (s *Server) SetRouteComplexEnabled(enabled bool) {
 	s.config.RouteComplexEnabled = enabled
 	s.clearServeCache(context.TODO())
 }
+
+// SetRequestStructPoolEnabled sets whether strict handler request structs are pooled.
+// It should only be enabled when *Req values are not retained after request completion.
+func (s *Server) SetRequestStructPoolEnabled(enabled bool) {
+	s.config.RequestStructPoolEnabled = enabled
+}

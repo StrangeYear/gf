@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -51,16 +52,23 @@ func newBenchmarkRequest(s *Server, method, target string, body string) (*Reques
 	return request, recorder
 }
 
+func closeBenchmarkRequest(b *testing.B, r *Request) {
+	b.Helper()
+	if err := r.Session.Close(); err != nil {
+		b.Fatal(err)
+	}
+	r.Response.BufferWriter.Close()
+	_ = r.Body.Close()
+	releaseRequest(r)
+}
+
 func BenchmarkInternal_NewRequest(b *testing.B) {
 	s := newBenchmarkServer("bench-request")
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r, _ := newBenchmarkRequest(s, http.MethodGet, "http://127.0.0.1/user/profile?id=1", "")
-		_ = r.Body.Close()
-		if err := r.Session.Close(); err != nil {
-			b.Fatal(err)
-		}
+		closeBenchmarkRequest(b, r)
 	}
 }
 
@@ -198,6 +206,83 @@ func TestInternal_RouteFastPath_MixedFallback(t *testing.T) {
 	_ = hasHook
 }
 
+func TestInternal_RequestStructPool(t *testing.T) {
+	type benchReq struct {
+		Name string `json:"name"`
+	}
+	var got string
+	s := newBenchmarkServer("test-request-struct-pool")
+	s.SetRequestStructPoolEnabled(true)
+	funcInfo, err := s.checkAndCreateFuncInfo(
+		func(ctx context.Context, req *benchReq) (res any, err error) {
+			got = req.Name
+			return req.Name, nil
+		},
+		"",
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlerItem := &HandlerItem{
+		Type: HandlerTypeHandler,
+		Info: funcInfo,
+	}
+	for _, name := range []string{"john", "smith"} {
+		request, _ := newBenchmarkRequest(
+			s,
+			http.MethodPost,
+			"http://127.0.0.1/bench/request-pool",
+			fmt.Sprintf(`{"name":"%s"}`, name),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.serveHandler = &HandlerItemParsed{Handler: handlerItem}
+		request.handlers = []*HandlerItemParsed{request.serveHandler}
+		funcInfo.Func(request)
+		if request.error != nil {
+			t.Fatal(request.error)
+		}
+		if got != name {
+			t.Fatalf("unexpected pooled request value: got %q, want %q", got, name)
+		}
+		if err = request.Session.Close(); err != nil {
+			t.Fatal(err)
+		}
+		request.Response.BufferWriter.Close()
+		_ = request.Body.Close()
+		releaseRequest(request)
+	}
+}
+
+func TestInternal_CreateRouterFunc_ContextOnly(t *testing.T) {
+	var called bool
+	s := newBenchmarkServer("test-router-func-context-only")
+	handler := func(ctx context.Context) error {
+		called = true
+		return nil
+	}
+	funcInfo := handlerFuncInfo{
+		Type:  reflect.TypeOf(handler),
+		Value: reflect.ValueOf(handler),
+	}
+	funcInfo.Func = createRouterFunc(funcInfo)
+	request, _ := newBenchmarkRequest(s, http.MethodGet, "http://127.0.0.1/bench/context-only", "")
+	funcInfo.Func(request)
+	if request.error != nil {
+		t.Fatal(request.error)
+	}
+	if !called {
+		t.Fatal("context-only handler was not called")
+	}
+	if err := request.Session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request.Response.BufferWriter.Close()
+	_ = request.Body.Close()
+	releaseRequest(request)
+}
+
 func BenchmarkInternal_GzipMiddleware(b *testing.B) {
 	s := newBenchmarkServer("bench-gzip")
 	payload := strings.Repeat("gzip-payload-", 1024)
@@ -228,14 +313,19 @@ func BenchmarkInternal_GzipMiddleware(b *testing.B) {
 		request.serveHandler = request.handlers[1]
 		request.Middleware.Next()
 		request.Response.Flush()
-		_ = request.Body.Close()
-		if err := request.Session.Close(); err != nil {
-			b.Fatal(err)
-		}
+		closeBenchmarkRequest(b, request)
 	}
 }
 
 func BenchmarkInternal_StrictBind(b *testing.B) {
+	benchmarkInternalStrictBind(b, false)
+}
+
+func BenchmarkInternal_StrictBindRequestPool(b *testing.B) {
+	benchmarkInternalStrictBind(b, true)
+}
+
+func benchmarkInternalStrictBind(b *testing.B, requestStructPoolEnabled bool) {
 	type benchReq struct {
 		Name  string `json:"name" v:"required"`
 		Email string `json:"email" v:"required|email"`
@@ -243,6 +333,7 @@ func BenchmarkInternal_StrictBind(b *testing.B) {
 	}
 
 	s := newBenchmarkServer("bench-bind")
+	s.SetRequestStructPoolEnabled(requestStructPoolEnabled)
 	funcInfo, err := s.checkAndCreateFuncInfo(
 		func(ctx context.Context, req *benchReq) (res any, err error) {
 			return req.Name, nil
@@ -272,10 +363,7 @@ func BenchmarkInternal_StrictBind(b *testing.B) {
 			b.Fatal(request.error)
 		}
 		request.Response.Flush()
-		_ = request.Body.Close()
-		if err := request.Session.Close(); err != nil {
-			b.Fatal(err)
-		}
+		closeBenchmarkRequest(b, request)
 	}
 }
 
@@ -290,9 +378,6 @@ func BenchmarkInternal_ResponseWriteBuffer(b *testing.B) {
 		request.Response.Write(payload)
 		request.Response.WriteHeader(http.StatusOK)
 		request.Response.Flush()
-		_ = request.Body.Close()
-		if err := request.Session.Close(); err != nil {
-			b.Fatal(err)
-		}
+		closeBenchmarkRequest(b, request)
 	}
 }

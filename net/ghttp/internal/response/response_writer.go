@@ -10,7 +10,14 @@ import (
 	"bufio"
 	"net"
 	"net/http"
+	"sync"
 )
+
+var writerPool = sync.Pool{
+	New: func() any {
+		return new(Writer)
+	},
+}
 
 // Writer wraps http.ResponseWriter for extra features.
 type Writer struct {
@@ -22,9 +29,20 @@ type Writer struct {
 
 // NewWriter creates and returns a new Writer.
 func NewWriter(writer http.ResponseWriter) *Writer {
-	return &Writer{
+	w := writerPool.Get().(*Writer)
+	*w = Writer{
 		ResponseWriter: writer,
 	}
+	return w
+}
+
+// Close resets and returns the writer wrapper to the pool after request completion.
+func (w *Writer) Close() {
+	if w == nil || w.ResponseWriter == nil {
+		return
+	}
+	*w = Writer{}
+	writerPool.Put(w)
 }
 
 // WriteHeader implements the interface of http.ResponseWriter.WriteHeader.

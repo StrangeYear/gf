@@ -159,6 +159,13 @@ func (n *routeFastNode) search(method, path string, parts []string, checkFallbac
 			}
 			break
 		}
+		if remainingPath == "/" {
+			// The root path has no more static prefix to consume, but "/" itself is a valid route.
+			if len(node.list) > 0 {
+				candidates = appendRouteFastCandidate(candidates, node.list, values, valuesReliable)
+			}
+			break
+		}
 		if child := node.findStaticChild(remainingPath[0]); child != nil && strings.HasPrefix(remainingPath, child.path) {
 			remainingPath = remainingPath[len(child.path):]
 			node = child

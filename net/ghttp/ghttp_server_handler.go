@@ -218,6 +218,8 @@ func (s *Server) handleAfterRequestDone(request *Request) {
 
 	// Metrics.
 	s.handleMetricsAfterRequestDone(request)
+
+	releaseRequest(request)
 }
 
 // searchStaticFile searches the file with given URI.

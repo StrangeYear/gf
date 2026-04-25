@@ -11,6 +11,7 @@ import (
 	"context"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -222,8 +223,10 @@ func (s *Server) checkAndCreateFuncInfo(
 	*/
 
 	funcInfo.IsStrictRoute = true
+	funcInfo.ReqStructType = funcInfo.Type.In(1).Elem()
+	funcInfo.ReqStructPool = newRequestStructPool(funcInfo.ReqStructType)
 
-	inputObject = reflect.New(funcInfo.Type.In(1).Elem())
+	inputObject = reflect.New(funcInfo.ReqStructType)
 	inputObjectPtr = inputObject.Interface()
 
 	// It retrieves and returns the request struct fields.
@@ -244,31 +247,65 @@ func (s *Server) checkAndCreateFuncInfo(
 	return
 }
 
+func newRequestStructPool(reqStructType reflect.Type) *sync.Pool {
+	return &sync.Pool{
+		New: func() any {
+			return reflect.New(reqStructType).Interface()
+		},
+	}
+}
+
 func createRouterFunc(funcInfo handlerFuncInfo) func(r *Request) {
+	var (
+		inputNum          = funcInfo.Type.NumIn()
+		reqInputIsPointer bool
+		reqStructType     reflect.Type
+		reqStructPool     *sync.Pool
+	)
+	if inputNum == 2 {
+		reqInputType := funcInfo.Type.In(1)
+		if reqInputType.Kind() == reflect.Pointer {
+			reqInputIsPointer = true
+			reqStructType = funcInfo.ReqStructType
+			if reqStructType == nil {
+				reqStructType = reqInputType.Elem()
+			}
+			reqStructPool = funcInfo.ReqStructPool
+		} else {
+			reqStructType = reqInputType
+		}
+	}
 	return func(r *Request) {
 		var (
 			ok          bool
 			err         error
-			inputValues = []reflect.Value{
-				reflect.ValueOf(r.Context()),
-			}
+			inputValues [2]reflect.Value
 		)
-		if funcInfo.Type.NumIn() == 2 {
+		inputValues[0] = reflect.ValueOf(r.Context())
+		if inputNum == 2 {
 			var inputObject reflect.Value
-			if funcInfo.Type.In(1).Kind() == reflect.Pointer {
-				inputObject = reflect.New(funcInfo.Type.In(1).Elem())
-				r.error = r.Parse(inputObject.Interface())
+			var inputObjectPtr any
+			if reqInputIsPointer {
+				if reqStructPool != nil && r.Server.config.RequestStructPoolEnabled {
+					inputObjectPtr = reqStructPool.Get()
+					inputObject = reflect.ValueOf(inputObjectPtr)
+					r.setPooledRequestStruct(reqStructPool, inputObjectPtr)
+				} else {
+					inputObject = reflect.New(reqStructType)
+					inputObjectPtr = inputObject.Interface()
+				}
+				r.error = r.Parse(inputObjectPtr)
 			} else {
-				inputObject = reflect.New(funcInfo.Type.In(1).Elem()).Elem()
+				inputObject = reflect.New(reqStructType).Elem()
 				r.error = r.Parse(inputObject.Addr().Interface())
 			}
 			if r.error != nil {
 				return
 			}
-			inputValues = append(inputValues, inputObject)
+			inputValues[1] = inputObject
 		}
 		// Call handler with dynamic created parameter values.
-		results := funcInfo.Value.Call(inputValues)
+		results := funcInfo.Value.Call(inputValues[:inputNum])
 		switch len(results) {
 		case 1:
 			if !results[0].IsNil() {

@@ -19,6 +19,12 @@ var bufferPool = sync.Pool{
 	},
 }
 
+var bufferWriterPool = sync.Pool{
+	New: func() any {
+		return new(BufferWriter)
+	},
+}
+
 // BufferWriter is the custom writer for http response with buffer.
 type BufferWriter struct {
 	*Writer               // The underlying BufferWriter.
@@ -27,10 +33,12 @@ type BufferWriter struct {
 }
 
 func NewBufferWriter(writer http.ResponseWriter) *BufferWriter {
-	return &BufferWriter{
+	w := bufferWriterPool.Get().(*BufferWriter)
+	*w = BufferWriter{
 		Writer: NewWriter(writer),
 		buffer: bufferPool.Get().(*bytes.Buffer),
 	}
+	return w
 }
 
 // RawWriter returns the underlying BufferWriter.
@@ -76,11 +84,21 @@ func (w *BufferWriter) ClearBuffer() {
 
 // Close releases the internal buffer after request handling is done.
 func (w *BufferWriter) Close() {
+	if w == nil || (w.buffer == nil && w.Writer == nil) {
+		return
+	}
 	if w.buffer != nil {
 		w.buffer.Reset()
 		bufferPool.Put(w.buffer)
 		w.buffer = nil
 	}
+	if w.Writer != nil {
+		w.Writer.Close()
+		w.Writer = nil
+	}
+	// BufferWriter itself is request-scoped; reset it so pooled instances never retain response state.
+	w.Status = 0
+	bufferWriterPool.Put(w)
 }
 
 // WriteHeader implements the interface of http.BufferWriter.WriteHeader.
