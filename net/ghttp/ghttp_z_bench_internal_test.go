@@ -23,7 +23,7 @@ func newBenchmarkServer(name string) *Server {
 		closeChan:        make(chan struct{}, 16),
 		statusHandlerMap: make(map[string][]HandlerFunc),
 		serveTree:        make(map[string]*routeTreeNode),
-		serveCache:       gcache.New(),
+		serveCache:       gcache.New(routeCacheLruCap),
 		routesMap:        make(map[string][]*HandlerItem),
 		openapi:          goai.New(),
 		registrar:        gsvc.GetRegistry(),

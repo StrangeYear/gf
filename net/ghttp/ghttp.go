@@ -154,6 +154,7 @@ const (
 	supportedHttpMethods               = "GET,PUT,POST,DELETE,PATCH,HEAD,CONNECT,OPTIONS,TRACE"
 	defaultMethod                      = "ALL"
 	routeCacheDuration                 = time.Hour
+	routeCacheLruCap                   = 10000
 	ctxKeyForRequest       gctx.StrKey = "gHttpRequestObject"
 	contentTypeXml                     = "text/xml"
 	contentTypeHtml                    = "text/html"

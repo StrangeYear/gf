@@ -84,6 +84,52 @@ func Test_Router_Hook_Fuzzy_Router(t *testing.T) {
 	})
 }
 
+func Test_Router_Hook_Router_Params(t *testing.T) {
+	s := g.Server(guid.S())
+	s.BindHookHandler("/*", ghttp.HookBeforeServe, func(r *ghttp.Request) {
+		r.Response.Write("before=", r.GetRouter("name", ""))
+	})
+	s.BindHookHandler("/*", ghttp.HookBeforeOutput, func(r *ghttp.Request) {
+		r.Response.Write(";output=", r.GetRouter("name", ""))
+	})
+	s.BindHandler("/user/:name", func(r *ghttp.Request) {
+		r.Response.Write(";serve=", r.GetRouter("name", ""))
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(client.GetContent(ctx, "/user/john"), "before=john;serve=john;output=john")
+	})
+}
+
+func Test_Router_Hook_Runtime_Bind_Clears_Cache(t *testing.T) {
+	s := g.Server(guid.S())
+	s.BindHandler("/cache", func(r *ghttp.Request) {
+		r.Response.Write("serve")
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(client.GetContent(ctx, "/cache"), "serve")
+		s.BindHookHandler("/cache", ghttp.HookBeforeServe, func(r *ghttp.Request) {
+			r.Response.Write("hook-")
+		})
+		t.Assert(client.GetContent(ctx, "/cache"), "hook-serve")
+	})
+}
+
 func Test_Router_Hook_Priority(t *testing.T) {
 	s := g.Server(guid.S())
 	s.BindHandler("/priority/show", func(r *ghttp.Request) {

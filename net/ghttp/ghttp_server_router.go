@@ -18,6 +18,7 @@ import (
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/internal/consts"
+	"github.com/gogf/gf/v2/internal/intlog"
 	"github.com/gogf/gf/v2/text/gregex"
 	"github.com/gogf/gf/v2/text/gstr"
 	"github.com/gogf/gf/v2/util/gmeta"
@@ -272,6 +273,17 @@ func (s *Server) doSetHandler(
 
 	// Append the route.
 	s.routesMap[routerKey] = append(s.routesMap[routerKey], handler)
+	s.clearServeCache(ctx)
+}
+
+func (s *Server) clearServeCache(ctx context.Context) {
+	if s.serveCache == nil {
+		return
+	}
+	// Route bindings can happen after the server has already served requests, so cached route plans must be invalidated.
+	if err := s.serveCache.Clear(ctx); err != nil {
+		intlog.Errorf(ctx, `%+v`, err)
+	}
 }
 
 func insertHandlerItemByPriority(

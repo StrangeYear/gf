@@ -81,6 +81,7 @@ type parseFieldMeta struct {
 var (
 	// customParseFuncMap stores the custom parse functions.
 	// map[Rule]ParseFunc
+	customParseFuncMu    sync.RWMutex
 	customParseFuncMap   = make(map[string]ParseFunc)
 	parseStructMetaCache sync.Map
 )
@@ -108,6 +109,8 @@ func init() {
 // The custom parse rule can be used in struct tag `parse`, for example:
 // `parse:"trim-space|your-rule:param"`.
 func RegisterParseRule(rule string, f ParseFunc) {
+	customParseFuncMu.Lock()
+	defer customParseFuncMu.Unlock()
 	if customParseFuncMap[rule] != nil {
 		intlog.PrintFunc(context.TODO(), func() string {
 			return fmt.Sprintf(
@@ -121,6 +124,8 @@ func RegisterParseRule(rule string, f ParseFunc) {
 
 // RegisterParseRuleByMap registers custom parse rules using map for package.
 func RegisterParseRuleByMap(m map[string]ParseFunc) {
+	customParseFuncMu.Lock()
+	defer customParseFuncMu.Unlock()
 	for k, v := range m {
 		customParseFuncMap[k] = v
 	}
@@ -128,6 +133,8 @@ func RegisterParseRuleByMap(m map[string]ParseFunc) {
 
 // GetRegisteredParseRuleMap returns all the custom registered parse rules and associated functions.
 func GetRegisteredParseRuleMap() map[string]ParseFunc {
+	customParseFuncMu.RLock()
+	defer customParseFuncMu.RUnlock()
 	if len(customParseFuncMap) == 0 {
 		return nil
 	}
@@ -140,6 +147,8 @@ func GetRegisteredParseRuleMap() map[string]ParseFunc {
 
 // DeleteParseRule deletes custom defined parse one or more rules and associated functions from global package.
 func DeleteParseRule(rules ...string) {
+	customParseFuncMu.Lock()
+	defer customParseFuncMu.Unlock()
 	for _, rule := range rules {
 		delete(customParseFuncMap, rule)
 	}
@@ -256,7 +265,7 @@ func (r *Request) doParseRuleItems(
 		if rule.Name == parseRuleForeach {
 			return r.doParseForeachRule(currentValue, data, fieldMeta, fieldPath, fieldMeta.ParseRules[i+1:])
 		}
-		parseFunc := customParseFuncMap[rule.Name]
+		parseFunc := getCustomParseFunc(rule.Name)
 		if parseFunc == nil {
 			return nil, gerror.NewCodef(
 				gcode.CodeInvalidParameter,
@@ -280,6 +289,13 @@ func (r *Request) doParseRuleItems(
 		}
 	}
 	return currentValue, nil
+}
+
+func getCustomParseFunc(rule string) ParseFunc {
+	customParseFuncMu.RLock()
+	parseFunc := customParseFuncMap[rule]
+	customParseFuncMu.RUnlock()
+	return parseFunc
 }
 
 func (r *Request) doParseForeachRule(

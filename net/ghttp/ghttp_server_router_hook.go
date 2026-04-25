@@ -71,8 +71,11 @@ func (s *Server) callHookHandler(hook HookName, r *Request) {
 	if len(hookItems) > 0 {
 		// Backup the old router variable map.
 		oldRouterMap := r.routerMap
+		defer func() {
+			r.routerMap = oldRouterMap
+		}()
 		for _, item := range hookItems {
-			r.routerMap = item.Values
+			r.routerMap = r.getHookRouterMap(item)
 			// DO NOT USE the router of the hook handler,
 			// which can overwrite the router of serving handler.
 			// r.Router = item.handler.router
@@ -90,9 +93,26 @@ func (s *Server) callHookHandler(hook HookName, r *Request) {
 				}
 			}
 		}
-		// Restore the old router variable map.
-		r.routerMap = oldRouterMap
 	}
+}
+
+func (r *Request) getHookRouterMap(item *HandlerItemParsed) map[string]string {
+	// Hooks should be able to read route parameters from the serving handler even when
+	// the hook itself is registered with a broader pattern such as "/*".
+	if r.serveHandler == nil || len(r.serveHandler.Values) == 0 {
+		return item.Values
+	}
+	if len(item.Values) == 0 {
+		return r.serveHandler.Values
+	}
+	values := make(map[string]string, len(r.serveHandler.Values)+len(item.Values))
+	for k, v := range r.serveHandler.Values {
+		values[k] = v
+	}
+	for k, v := range item.Values {
+		values[k] = v
+	}
+	return values
 }
 
 // getHookHandlers retrieves and returns the hook handlers of specified hook.

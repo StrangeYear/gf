@@ -7,7 +7,6 @@
 package ghttp
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -22,6 +21,8 @@ import (
 type handlerCacheItem struct {
 	parsedItems []*HandlerItemParsed
 	serveItem   *HandlerItemParsed
+	handlers    []*HandlerItem
+	serveIndex  int
 	hasHook     bool
 	hasServe    bool
 }
@@ -68,22 +69,90 @@ func (s *Server) getHandlersWithCache(r *Request) (parsedItems []*HandlerItemPar
 	if xUrlPath := r.Header.Get(HeaderXUrlPath); xUrlPath != "" {
 		path = xUrlPath
 	}
-	var handlerCacheKey = s.serveHandlerKey(method, path, host)
-	value, err := s.serveCache.GetOrSetFunc(ctx, handlerCacheKey, func(ctx context.Context) (any, error) {
-		parsedItems, serveItem, hasHook, hasServe = s.searchHandlers(method, path, host)
-		if parsedItems != nil {
-			return &handlerCacheItem{parsedItems, serveItem, hasHook, hasServe}, nil
-		}
-		return nil, nil
-	}, routeCacheDuration)
+	cacheHost := host
+	if _, ok := s.serveTree[host]; !ok {
+		// Without host-specific routes, every host resolves against the same default tree.
+		cacheHost = ""
+	}
+	var handlerCacheKey = s.serveHandlerKey(method, path, cacheHost)
+	value, err := s.serveCache.Get(ctx, handlerCacheKey)
 	if err != nil {
 		intlog.Errorf(ctx, `%+v`, err)
 	}
 	if value != nil {
 		item := value.Val().(*handlerCacheItem)
+		if item.handlers != nil {
+			return item.parse(path)
+		}
 		return item.parsedItems, item.serveItem, item.hasHook, item.hasServe
 	}
+	parsedItems, serveItem, hasHook, hasServe = s.searchHandlers(method, path, host)
+	if cacheItem := newHandlerCacheItem(parsedItems, serveItem, hasHook, hasServe); cacheItem != nil {
+		if err = s.serveCache.Set(
+			ctx,
+			handlerCacheKey,
+			cacheItem,
+			routeCacheDuration,
+		); err != nil {
+			intlog.Errorf(ctx, `%+v`, err)
+		}
+	}
 	return
+}
+
+func newHandlerCacheItem(
+	parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool,
+) *handlerCacheItem {
+	if len(parsedItems) == 0 {
+		return nil
+	}
+	cacheItem := &handlerCacheItem{
+		parsedItems: parsedItems,
+		serveItem:   serveItem,
+		serveIndex:  -1,
+		hasHook:     hasHook,
+		hasServe:    hasServe,
+	}
+	for index, item := range parsedItems {
+		if len(item.Values) > 0 {
+			// Router values are request-path specific, so dynamic routes cache only the matched handler plan.
+			cacheItem.parsedItems = nil
+			cacheItem.serveItem = nil
+			cacheItem.handlers = make([]*HandlerItem, len(parsedItems))
+			for i, parsedItem := range parsedItems {
+				cacheItem.handlers[i] = parsedItem.Handler
+				if parsedItem == serveItem {
+					cacheItem.serveIndex = i
+				}
+			}
+			return cacheItem
+		}
+		if item == serveItem {
+			cacheItem.serveIndex = index
+		}
+	}
+	return cacheItem
+}
+
+func (h *handlerCacheItem) parse(path string) (
+	parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool,
+) {
+	path = normalizeRouterSearchPath(path)
+	var (
+		array       []string
+		arrayBuffer [16]string
+	)
+	array = splitRouterSearchPath(path, arrayBuffer[:0])
+	parsedItems = make([]*HandlerItemParsed, 0, len(h.handlers))
+	for index, handler := range h.handlers {
+		_, values := handler.Router.match(path, array)
+		parsedItem := &HandlerItemParsed{Handler: handler, Values: values}
+		parsedItems = append(parsedItems, parsedItem)
+		if index == h.serveIndex {
+			serveItem = parsedItem
+		}
+	}
+	return parsedItems, serveItem, h.hasHook, h.hasServe
 }
 
 // searchHandlers retrieve and returns the routers with given parameters.

@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/gogf/gf/v2/debug/gdebug"
 	"github.com/gogf/gf/v2/internal/consts"
@@ -49,27 +50,44 @@ const (
 )
 
 var (
-	preBindItems = make([]*preBindItem, 0, 64)
+	preBindItemsMu sync.Mutex
+	preBindItems   = make([]*preBindItem, 0, 64)
 )
 
 // handlePreBindItems is called when server starts, which does really route registering to the server.
 func (s *Server) handlePreBindItems(ctx context.Context) {
+	preBindItemsMu.Lock()
 	if len(preBindItems) == 0 {
+		preBindItemsMu.Unlock()
 		return
 	}
+	pendingItems := make([]*preBindItem, 0)
+	remainingItems := preBindItems[:0]
 	for _, item := range preBindItems {
 		if item.bound {
 			continue
 		}
 		// Handle the items of current server.
 		if item.group.server != nil && item.group.server != s {
+			remainingItems = append(remainingItems, item)
 			continue
 		}
 		if item.group.domain != nil && item.group.domain.server != s {
+			remainingItems = append(remainingItems, item)
 			continue
 		}
-		item.group.doBindRoutersToServer(ctx, item)
 		item.bound = true
+		pendingItems = append(pendingItems, item)
+	}
+	preBindItems = remainingItems
+	preBindItemsMu.Unlock()
+
+	for _, item := range pendingItems {
+		item.group.doBindRoutersToServer(ctx, item)
+		// Release references held by the package-level pre-bind queue after the route is registered.
+		item.group = nil
+		item.object = nil
+		item.params = nil
 	}
 }
 
@@ -268,6 +286,7 @@ func (g *RouterGroup) Middleware(handlers ...HandlerFunc) *RouterGroup {
 // preBindToLocalArray adds the route registering parameters to an internal variable array for lazily registering feature.
 func (g *RouterGroup) preBindToLocalArray(bindType string, pattern string, object any, params ...any) *RouterGroup {
 	_, file, line := gdebug.CallerWithFilter([]string{consts.StackFilterKeyForGoFrame})
+	preBindItemsMu.Lock()
 	preBindItems = append(preBindItems, &preBindItem{
 		group:    g,
 		bindType: bindType,
@@ -276,6 +295,7 @@ func (g *RouterGroup) preBindToLocalArray(bindType string, pattern string, objec
 		params:   params,
 		source:   fmt.Sprintf(`%s:%d`, file, line),
 	})
+	preBindItemsMu.Unlock()
 	return g
 }
 
