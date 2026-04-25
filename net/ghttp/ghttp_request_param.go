@@ -110,12 +110,14 @@ func (r *Request) doParse(pointer any, requestType int) error {
 			}
 		}
 		// Validation.
-		if err = gvalid.New().
-			Bail().
-			Data(pointer).
-			Assoc(data).
-			Run(r.Context()); err != nil {
-			return err
+		if r.shouldValidateParsedStruct() {
+			if err = gvalid.New().
+				Bail().
+				Data(pointer).
+				Assoc(data).
+				Run(r.Context()); err != nil {
+				return err
+			}
 		}
 
 	// Multiple struct, it only supports JSON type post content like:
@@ -126,6 +128,20 @@ func (r *Request) doParse(pointer any, requestType int) error {
 		}
 	}
 	return nil
+}
+
+func (r *Request) shouldValidateParsedStruct() bool {
+	if r == nil || r.serveHandler == nil || r.serveHandler.Handler == nil {
+		return true
+	}
+	info := r.serveHandler.Handler.Info
+	if !info.IsStrictRoute {
+		return true
+	}
+	// Strict object routes cache request-struct metadata at registration time.
+	// If there are no validation tags and no recursive validation candidates,
+	// running gvalid is a no-op that only adds reflection and allocation cost.
+	return info.ReqStructNeedsValidation
 }
 
 func (r *Request) doParseArray(pointer any, reflectVal reflect.Value) error {
@@ -387,6 +403,11 @@ func (r *Request) parseForm() {
 			r.formMap = r.bodyMap
 		}
 	}
+}
+
+func (r *Request) hasFormContentType() bool {
+	contentType := r.Header.Get("Content-Type")
+	return contentType != "" && (gstr.Contains(contentType, "multipart/") || gstr.Contains(contentType, "form"))
 }
 
 // GetMultipartForm parses and returns the form as multipart forms.

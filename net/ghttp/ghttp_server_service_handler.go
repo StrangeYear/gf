@@ -235,6 +235,7 @@ func (s *Server) checkAndCreateFuncInfo(
 		return funcInfo, err
 	}
 	funcInfo.ReqStructFields = fields
+	funcInfo.ReqStructDefaults, funcInfo.ReqStructIn, funcInfo.ReqStructNeedsValidation = buildRequestStructTagMeta(fields)
 	if funcInfo.ReqStructParseMeta, err = getOrBuildParseStructMetaByType(funcInfo.Type.In(1).Elem()); err != nil {
 		return funcInfo, err
 	}

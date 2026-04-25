@@ -373,12 +373,13 @@ func findParseValueFromMap(
 }
 
 func buildParseLookupKeys(fieldMeta parseFieldMeta, mapping map[string]string) []string {
+	if len(mapping) == 0 {
+		return fieldMeta.BaseLookupKeys
+	}
 	keys := make([]string, 0, len(fieldMeta.BaseLookupKeys)+1)
-	if len(mapping) > 0 {
-		for paramKey, attrName := range mapping {
-			if attrName == fieldMeta.Name {
-				keys = append(keys, paramKey)
-			}
+	for paramKey, attrName := range mapping {
+		if attrName == fieldMeta.Name {
+			keys = append(keys, paramKey)
 		}
 	}
 	keys = append(keys, fieldMeta.BaseLookupKeys...)

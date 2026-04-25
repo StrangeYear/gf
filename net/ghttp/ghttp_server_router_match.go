@@ -25,15 +25,17 @@ const (
 )
 
 type routeMatcher struct {
-	mode     routeMatcherMode
-	path     string
-	segments []routeSegmentMatcher
+	mode         routeMatcherMode
+	path         string
+	segments     []routeSegmentMatcher
+	captureCount int
 }
 
 type routeSegmentMatcher struct {
-	kind  routeSegmentMatcherKind
-	value string
-	parts []routeSegmentPart
+	kind         routeSegmentMatcherKind
+	value        string
+	parts        []routeSegmentPart
+	captureCount int
 }
 
 type routeSegmentPart struct {
@@ -84,11 +86,11 @@ func (m *routeMatcher) match(path string, parts []string) (matched bool, values 
 					captured := captureRouterCatchAllValue(path, partIndex, len(parts))
 					if captured != "" {
 						if values == nil {
-							values = make(map[string]string, 1)
+							values = m.makeValues()
 						}
 						values[segment.value], _ = gurl.Decode(captured)
 					} else if values == nil {
-						values = make(map[string]string, 1)
+						values = m.makeValues()
 						values[segment.value] = ""
 					}
 				}
@@ -113,13 +115,13 @@ func (m *routeMatcher) match(path string, parts []string) (matched bool, values 
 					}
 					if segment.value != "" {
 						if values == nil {
-							values = make(map[string]string, 1)
+							values = m.makeValues()
 						}
 						values[segment.value], _ = gurl.Decode(part)
 					}
 
 				case routeSegmentMatcherKindPattern:
-					matched, values = matchRoutePatternSegment(segment.parts, part, values)
+					matched, values = matchRoutePatternSegment(segment.parts, part, values, m.captureCount)
 					if !matched {
 						return false, nil
 					}
@@ -133,6 +135,16 @@ func (m *routeMatcher) match(path string, parts []string) (matched bool, values 
 		return partIndex == len(parts), values
 	}
 	return false, nil
+}
+
+func (m *routeMatcher) makeValues() map[string]string {
+	capacity := m.captureCount
+	if capacity < 1 {
+		capacity = 1
+	}
+	// Route parameter count is known at registration time, so allocate enough
+	// buckets up front and avoid map growth on multi-parameter routes.
+	return make(map[string]string, capacity)
 }
 
 func captureRouterCatchAllValue(path string, partIndex, partCount int) string {
@@ -177,6 +189,7 @@ func newRouteMatcher(rule string) *routeMatcher {
 			return &routeMatcher{mode: routeMatcherModeRegex}
 		}
 		matcher.segments = append(matcher.segments, compiledSegment)
+		matcher.captureCount += compiledSegment.captureCount
 		if compiledSegment.kind != routeSegmentMatcherKindStatic {
 			hasDynamicSegment = true
 		}
@@ -196,14 +209,16 @@ func compileRouteSegmentMatcher(segment string) (routeSegmentMatcher, bool) {
 	switch segment[0] {
 	case ':':
 		return routeSegmentMatcher{
-			kind:  routeSegmentMatcherKindNamed,
-			value: segment[1:],
+			kind:         routeSegmentMatcherKindNamed,
+			value:        segment[1:],
+			captureCount: 1,
 		}, true
 
 	case '*':
 		return routeSegmentMatcher{
-			kind:  routeSegmentMatcherKindCatchAll,
-			value: segment[1:],
+			kind:         routeSegmentMatcherKindCatchAll,
+			value:        segment[1:],
+			captureCount: 1,
 		}, true
 	}
 
@@ -217,18 +232,20 @@ func compileRouteSegmentMatcher(segment string) (routeSegmentMatcher, bool) {
 		}, true
 	}
 
-	parts, ok := compileRoutePatternParts(segment)
+	parts, captureCount, ok := compileRoutePatternParts(segment)
 	if !ok {
 		return routeSegmentMatcher{}, false
 	}
 	return routeSegmentMatcher{
-		kind:  routeSegmentMatcherKindPattern,
-		parts: parts,
+		kind:         routeSegmentMatcherKindPattern,
+		parts:        parts,
+		captureCount: captureCount,
 	}, true
 }
 
-func compileRoutePatternParts(segment string) ([]routeSegmentPart, bool) {
+func compileRoutePatternParts(segment string) ([]routeSegmentPart, int, bool) {
 	parts := make([]routeSegmentPart, 0, 4)
+	captureCount := 0
 	for index := 0; index < len(segment); {
 		if segment[index] != '{' {
 			nextIndex := strings.IndexByte(segment[index:], '{')
@@ -243,22 +260,25 @@ func compileRoutePatternParts(segment string) ([]routeSegmentPart, bool) {
 
 		endIndex := strings.IndexByte(segment[index+1:], '}')
 		if endIndex < 0 {
-			return nil, false
+			return nil, 0, false
 		}
 		name := segment[index+1 : index+1+endIndex]
 		if name == "" {
-			return nil, false
+			return nil, 0, false
 		}
 		if len(parts) > 0 && parts[len(parts)-1].name != "" {
-			return nil, false
+			return nil, 0, false
 		}
 		parts = append(parts, routeSegmentPart{name: name})
+		captureCount++
 		index += endIndex + 2
 	}
-	return parts, len(parts) > 0
+	return parts, captureCount, len(parts) > 0
 }
 
-func matchRoutePatternSegment(parts []routeSegmentPart, segment string, values map[string]string) (bool, map[string]string) {
+func matchRoutePatternSegment(
+	parts []routeSegmentPart, segment string, values map[string]string, valueCapacity int,
+) (bool, map[string]string) {
 	// Pattern captures are usually tiny, so keep them on stack instead of allocating a temporary map.
 	var captureBuffer [4]routePatternCapture
 	captures := captureBuffer[:0]
@@ -270,7 +290,10 @@ func matchRoutePatternSegment(parts []routeSegmentPart, segment string, values m
 		return true, values
 	}
 	if values == nil {
-		values = make(map[string]string, len(captures))
+		if valueCapacity < len(captures) {
+			valueCapacity = len(captures)
+		}
+		values = make(map[string]string, valueCapacity)
 	}
 	for _, capture := range captures {
 		values[capture.name], _ = gurl.Decode(capture.value)
