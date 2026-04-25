@@ -296,6 +296,78 @@ const (
 	})
 }
 
+func Test_EnumsParser_ParsePackages_PreservesConstOrder(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		tempDir := gfile.Temp(guid.S())
+		err := gfile.Mkdir(tempDir)
+		t.AssertNil(err)
+		defer gfile.Remove(tempDir)
+
+		goModContent := `module github.com/test/ordertest
+
+go 1.21
+`
+		err = gfile.PutContents(filepath.Join(tempDir, "go.mod"), goModContent)
+		t.AssertNil(err)
+
+		enumsContent := `package ordertest
+
+type IotaOrder int
+
+const (
+	// IotaSecond second
+	IotaSecond IotaOrder = iota
+	// IotaFirst first
+	IotaFirst
+	// IotaThird third
+	IotaThird
+)
+
+type NumericOrder int
+
+const (
+	NumericSecond NumericOrder = 2
+	NumericFirst  NumericOrder = 1
+	NumericThird  NumericOrder = 3
+)
+`
+		err = gfile.PutContents(filepath.Join(tempDir, "enums.go"), enumsContent)
+		t.AssertNil(err)
+
+		cfg := &packages.Config{
+			Dir:   tempDir,
+			Mode:  pkgLoadMode,
+			Tests: false,
+		}
+		pkgs, err := packages.Load(cfg)
+		t.AssertNil(err)
+		t.Assert(len(pkgs) > 0, true)
+
+		p := NewEnumsParser(nil)
+		p.ParsePackages(pkgs)
+		result := p.Export()
+
+		var resultMap map[string][]EnumExportItem
+		err = gjson.DecodeTo(result, &resultMap)
+		t.AssertNil(err)
+
+		iotaOrderValues := resultMap["github.com/test/ordertest.IotaOrder"]
+		t.Assert(len(iotaOrderValues), 3)
+		t.Assert(iotaOrderValues[0].Value, float64(0))
+		t.Assert(iotaOrderValues[0].Comment, "second")
+		t.Assert(iotaOrderValues[1].Value, float64(1))
+		t.Assert(iotaOrderValues[1].Comment, "first")
+		t.Assert(iotaOrderValues[2].Value, float64(2))
+		t.Assert(iotaOrderValues[2].Comment, "third")
+
+		numericOrderValues := resultMap["github.com/test/ordertest.NumericOrder"]
+		t.Assert(len(numericOrderValues), 3)
+		t.Assert(numericOrderValues[0].Value, float64(2))
+		t.Assert(numericOrderValues[1].Value, float64(1))
+		t.Assert(numericOrderValues[2].Value, float64(3))
+	})
+}
+
 func Test_EnumsParser_ParsePackages_WithComments(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
 		tempDir := gfile.Temp(guid.S())

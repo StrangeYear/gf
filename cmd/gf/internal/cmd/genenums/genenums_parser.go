@@ -10,6 +10,7 @@ import (
 	"go/ast"
 	"go/constant"
 	"go/types"
+	"sort"
 
 	"golang.org/x/tools/go/packages"
 
@@ -79,44 +80,7 @@ func (p *EnumsParser) ParsePackage(pkg *packages.Package) {
 		}
 	}
 
-	var enumComments = p.parseEnumComments(pkg)
-
-	var (
-		scope = pkg.Types.Scope()
-		names = scope.Names()
-	)
-	for _, name := range names {
-		con, ok := scope.Lookup(name).(*types.Const)
-		if !ok {
-			// Only constants can be enums.
-			continue
-		}
-		if !con.Exported() {
-			// Ignore unexported values.
-			continue
-		}
-
-		var enumType = con.Type().String()
-		if !gstr.Contains(enumType, "/") {
-			// Ignore std types.
-			continue
-		}
-		var (
-			enumName  = con.Name()
-			enumValue = con.Val().ExactString()
-			enumKind  = con.Val().Kind()
-		)
-		if con.Val().Kind() == constant.String {
-			enumValue = constant.StringVal(con.Val())
-		}
-		p.enums = append(p.enums, EnumItem{
-			Name:    enumName,
-			Value:   enumValue,
-			Type:    enumType,
-			Kind:    enumKind,
-			Comment: enumComments[p.enumKey(enumType, enumName)],
-		})
-	}
+	p.enums = append(p.enums, p.parseEnumItems(pkg)...)
 	for _, im := range pkg.Imports {
 		p.ParsePackage(im)
 	}
@@ -149,48 +113,76 @@ func (p *EnumsParser) Export() string {
 	return gjson.MustEncodeString(typeEnumMap)
 }
 
-func (p *EnumsParser) parseEnumComments(pkg *packages.Package) map[string]string {
-	var comments = make(map[string]string)
+func (p *EnumsParser) parseEnumItems(pkg *packages.Package) []EnumItem {
+	var enums []EnumItem
 	if pkg == nil || pkg.TypesInfo == nil {
-		return comments
+		return enums
 	}
-	for _, file := range pkg.Syntax {
+	files := append([]*ast.File(nil), pkg.Syntax...)
+	sort.SliceStable(files, func(i, j int) bool {
+		if pkg.Fset == nil {
+			return files[i].Pos() < files[j].Pos()
+		}
+		iPos := pkg.Fset.Position(files[i].Pos())
+		jPos := pkg.Fset.Position(files[j].Pos())
+		if iPos.Filename == jPos.Filename {
+			return files[i].Pos() < files[j].Pos()
+		}
+		return iPos.Filename < jPos.Filename
+	})
+	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			valueSpec, ok := n.(*ast.ValueSpec)
 			if !ok {
 				return true
 			}
-			comment := ""
-			if valueSpec.Comment != nil {
-				comment = valueSpec.Comment.Text()
-			}
-			if comment == "" && valueSpec.Doc != nil {
-				comment = valueSpec.Doc.Text()
-			}
-			comment = gstr.Trim(comment)
-			if comment == "" {
-				return true
-			}
+			comment := p.valueSpecComment(valueSpec)
 			for _, name := range valueSpec.Names {
-				obj := pkg.TypesInfo.Defs[name]
-				con, ok := obj.(*types.Const)
-				if !ok || !con.Exported() {
+				enum, ok := p.enumItemFromIdent(pkg, name, comment)
+				if !ok {
 					continue
 				}
-				enumType := con.Type().String()
-				if !gstr.Contains(enumType, "/") {
-					continue
-				}
-				comments[p.enumKey(enumType, con.Name())] = p.normalizeEnumComment(con.Name(), comment)
+				enums = append(enums, enum)
 			}
 			return true
 		})
 	}
-	return comments
+	return enums
 }
 
-func (p *EnumsParser) enumKey(enumType, enumName string) string {
-	return enumType + "#" + enumName
+func (p *EnumsParser) enumItemFromIdent(pkg *packages.Package, name *ast.Ident, comment string) (EnumItem, bool) {
+	obj := pkg.TypesInfo.Defs[name]
+	con, ok := obj.(*types.Const)
+	if !ok || !con.Exported() {
+		return EnumItem{}, false
+	}
+	enumType := con.Type().String()
+	if !gstr.Contains(enumType, "/") {
+		return EnumItem{}, false
+	}
+	enumValue := con.Val().ExactString()
+	enumKind := con.Val().Kind()
+	if enumKind == constant.String {
+		enumValue = constant.StringVal(con.Val())
+	}
+	return EnumItem{
+		Name:    con.Name(),
+		Value:   enumValue,
+		Type:    enumType,
+		Kind:    enumKind,
+		Comment: p.normalizeEnumComment(con.Name(), comment),
+	}, true
+}
+
+func (p *EnumsParser) valueSpecComment(valueSpec *ast.ValueSpec) string {
+	comment := ""
+	if valueSpec.Comment != nil {
+		comment = valueSpec.Comment.Text()
+	}
+	if comment == "" && valueSpec.Doc != nil {
+		comment = valueSpec.Doc.Text()
+	}
+	return gstr.Trim(comment)
 }
 
 func (p *EnumsParser) normalizeEnumComment(enumName, comment string) string {
