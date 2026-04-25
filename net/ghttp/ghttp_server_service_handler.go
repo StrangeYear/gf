@@ -19,6 +19,76 @@ import (
 	"github.com/gogf/gf/v2/text/gstr"
 )
 
+// StrictHandler is a typed strict route handler created by NewStrictHandler.
+// Its fields are intentionally unexported so registration metadata stays controlled by ghttp.
+type StrictHandler struct {
+	reqStructType reflect.Type
+	reqStructPool *sync.Pool
+	handlerType   reflect.Type
+	handlerValue  reflect.Value
+	handlerFunc   HandlerFunc
+	err           error
+}
+
+// NewStrictHandler creates a typed strict route handler for RouterGroup.Bind.
+// Route metadata such as path, method and domain is read from Req's g.Meta tags.
+func NewStrictHandler[Req any, Res any](
+	handler func(context.Context, *Req) (*Res, error),
+) *StrictHandler {
+	reqStructType := reflect.TypeOf((*Req)(nil)).Elem()
+	h := &StrictHandler{
+		reqStructType: reqStructType,
+		reqStructPool: &sync.Pool{
+			New: func() any {
+				return new(Req)
+			},
+		},
+		handlerType:  reflect.TypeOf(handler),
+		handlerValue: reflect.ValueOf(handler),
+	}
+	if handler == nil {
+		h.err = gerror.NewCode(gcode.CodeInvalidParameter, "strict handler should not be nil")
+		return h
+	}
+	if reqStructType.Kind() != reflect.Struct {
+		h.err = gerror.NewCodef(
+			gcode.CodeInvalidParameter,
+			"strict handler request type should be struct, but got %s",
+			reqStructType.String(),
+		)
+		return h
+	}
+	h.handlerFunc = createTypedStrictHandlerFunc(handler)
+	return h
+}
+
+func createTypedStrictHandlerFunc[Req any, Res any](
+	handler func(context.Context, *Req) (*Res, error),
+) HandlerFunc {
+	return func(r *Request) {
+		var req *Req
+		if r.Server.config.RequestStructPoolEnabled && r.serveHandler != nil && r.serveHandler.Handler != nil {
+			if pool := r.serveHandler.Handler.Info.ReqStructPool; pool != nil {
+				req = pool.Get().(*Req)
+				r.setPooledRequestStruct(pool, req)
+			}
+		}
+		if req == nil {
+			req = new(Req)
+		}
+		if err := r.parseStrictRouteRequest(req); err != nil {
+			r.error = err
+			return
+		}
+		res, err := handler(r.Context(), req)
+		if err != nil {
+			r.error = err
+			return
+		}
+		r.handlerResponse = res
+	}
+}
+
 // BindHandler registers a handler function to server with a given pattern.
 //
 // Note that the parameter `handler` can be type of:
@@ -33,6 +103,22 @@ func (s *Server) BindHandler(pattern string, handler any) {
 	s.doBindHandler(ctx, doBindHandlerInput{
 		Prefix:     "",
 		Pattern:    pattern,
+		FuncInfo:   funcInfo,
+		Middleware: nil,
+		Source:     "",
+	})
+}
+
+// BindStrictHandler registers a typed strict handler whose route metadata is read from its request struct.
+func (s *Server) BindStrictHandler(handler *StrictHandler) {
+	var ctx = context.TODO()
+	funcInfo, err := s.checkAndCreateFuncInfo(handler, "", "", "")
+	if err != nil {
+		s.Logger().Fatalf(ctx, `%+v`, err)
+	}
+	s.doBindHandler(ctx, doBindHandlerInput{
+		Prefix:     "",
+		Pattern:    "/",
 		FuncInfo:   funcInfo,
 		Middleware: nil,
 		Source:     "",
@@ -149,6 +235,9 @@ func (s *Server) nameToUri(name string) string {
 func (s *Server) checkAndCreateFuncInfo(
 	f any, pkgPath, structName, methodName string,
 ) (funcInfo handlerFuncInfo, err error) {
+	if strictHandler, ok := f.(*StrictHandler); ok {
+		return s.checkAndCreateStrictHandlerFuncInfo(strictHandler)
+	}
 	funcInfo = handlerFuncInfo{
 		Type:  reflect.TypeOf(f),
 		Value: reflect.ValueOf(f),
@@ -158,11 +247,7 @@ func (s *Server) checkAndCreateFuncInfo(
 		return
 	}
 
-	var (
-		reflectType    = funcInfo.Type
-		inputObject    reflect.Value
-		inputObjectPtr any
-	)
+	var reflectType = funcInfo.Type
 	if reflectType.NumIn() != 2 || reflectType.NumOut() != 2 {
 		if pkgPath != "" {
 			err = gerror.NewCodef(
@@ -223,11 +308,49 @@ func (s *Server) checkAndCreateFuncInfo(
 	*/
 
 	funcInfo.IsStrictRoute = true
-	funcInfo.ReqStructType = funcInfo.Type.In(1).Elem()
-	funcInfo.ReqStructPool = newRequestStructPool(funcInfo.ReqStructType)
+	if err = s.buildStrictRequestInfo(&funcInfo, funcInfo.Type.In(1).Elem(), nil); err != nil {
+		return funcInfo, err
+	}
+	funcInfo.Func = createRouterFunc(funcInfo)
+	return
+}
 
-	inputObject = reflect.New(funcInfo.ReqStructType)
-	inputObjectPtr = inputObject.Interface()
+func (s *Server) checkAndCreateStrictHandlerFuncInfo(
+	strictHandler *StrictHandler,
+) (funcInfo handlerFuncInfo, err error) {
+	if strictHandler == nil {
+		return funcInfo, gerror.NewCode(gcode.CodeInvalidParameter, "strict handler should not be nil")
+	}
+	if strictHandler.err != nil {
+		return funcInfo, strictHandler.err
+	}
+	funcInfo = handlerFuncInfo{
+		Type:          strictHandler.handlerType,
+		Value:         strictHandler.handlerValue,
+		Func:          strictHandler.handlerFunc,
+		IsStrictRoute: true,
+	}
+	if err = s.buildStrictRequestInfo(&funcInfo, strictHandler.reqStructType, strictHandler.reqStructPool); err != nil {
+		return funcInfo, err
+	}
+	return funcInfo, nil
+}
+
+func (s *Server) buildStrictRequestInfo(
+	funcInfo *handlerFuncInfo, reqStructType reflect.Type, reqStructPool *sync.Pool,
+) (err error) {
+	funcInfo.IsStrictRoute = true
+	funcInfo.ReqStructType = reqStructType
+	funcInfo.ReqStructHasCustomParser = reflect.PointerTo(reqStructType).Implements(requestParserType)
+	if reqStructPool != nil {
+		// NewStrictHandler supplies a typed pool so request objects can be allocated with new(Req).
+		funcInfo.ReqStructPool = reqStructPool
+	} else {
+		funcInfo.ReqStructPool = newRequestStructPool(reqStructType)
+	}
+
+	inputObject := reflect.New(reqStructType)
+	inputObjectPtr := inputObject.Interface()
 
 	// It retrieves and returns the request struct fields.
 	fields, err := gstructs.Fields(gstructs.FieldsInput{
@@ -235,16 +358,15 @@ func (s *Server) checkAndCreateFuncInfo(
 		RecursiveOption: gstructs.RecursiveOptionEmbedded,
 	})
 	if err != nil {
-		return funcInfo, err
+		return err
 	}
 	funcInfo.ReqStructFields = fields
 	funcInfo.ReqStructDefaults, funcInfo.ReqStructIn, funcInfo.ReqStructNeedsValidation = buildRequestStructTagMeta(fields)
-	if funcInfo.ReqStructParseMeta, err = getOrBuildParseStructMetaByType(funcInfo.Type.In(1).Elem()); err != nil {
-		return funcInfo, err
+	if funcInfo.ReqStructParseMeta, err = getOrBuildParseStructMetaByType(reqStructType); err != nil {
+		return err
 	}
 	funcInfo.ReqStructHasParseTag = funcInfo.ReqStructParseMeta != nil && funcInfo.ReqStructParseMeta.HasParseTag
-	funcInfo.Func = createRouterFunc(funcInfo)
-	return
+	return nil
 }
 
 func newRequestStructPool(reqStructType reflect.Type) *sync.Pool {
@@ -294,10 +416,10 @@ func createRouterFunc(funcInfo handlerFuncInfo) func(r *Request) {
 					inputObject = reflect.New(reqStructType)
 					inputObjectPtr = inputObject.Interface()
 				}
-				r.error = r.Parse(inputObjectPtr)
+				r.error = r.parseStrictRouteRequest(inputObjectPtr)
 			} else {
 				inputObject = reflect.New(reqStructType).Elem()
-				r.error = r.Parse(inputObject.Addr().Interface())
+				r.error = r.parseStrictRouteRequest(inputObject.Addr().Interface())
 			}
 			if r.error != nil {
 				return

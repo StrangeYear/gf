@@ -90,6 +90,7 @@ type (
 		ReqStructDefaults        []requestStructDefaultMeta // Cached default tag metadata for strict route request structs.
 		ReqStructIn              []requestStructInMeta      // Cached header/cookie source metadata for strict route request structs.
 		ReqStructNeedsValidation bool                       // Whether the request struct can trigger gvalid validation work.
+		ReqStructHasCustomParser bool                       // Whether the request struct implements RequestParser.
 		ReqStructHasParseTag     bool                       // Whether request struct has parse tag definitions.
 		ReqStructParseMeta       *parseStructMeta           // Request struct parse metadata.
 	}

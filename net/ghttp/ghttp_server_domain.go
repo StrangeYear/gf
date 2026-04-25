@@ -36,6 +36,24 @@ func (d *Domain) BindHandler(pattern string, handler any) {
 	}
 }
 
+// BindStrictHandler binds the typed strict handler for the specified domain.
+func (d *Domain) BindStrictHandler(handler *StrictHandler) {
+	for domain := range d.domains {
+		d.server.doBindHandler(context.TODO(), doBindHandlerInput{
+			Pattern:  patternBindDomain("/", domain),
+			FuncInfo: d.mustCreateStrictHandlerFuncInfo(handler),
+		})
+	}
+}
+
+func (d *Domain) mustCreateStrictHandlerFuncInfo(handler *StrictHandler) handlerFuncInfo {
+	funcInfo, err := d.server.checkAndCreateFuncInfo(handler, "", "", "")
+	if err != nil {
+		d.server.Logger().Fatalf(context.TODO(), `%+v`, err)
+	}
+	return funcInfo
+}
+
 func (d *Domain) doBindHandler(ctx context.Context, in doBindHandlerInput) {
 	for domain := range d.domains {
 		d.server.doBindHandler(ctx, doBindHandlerInput{

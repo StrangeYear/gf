@@ -18,6 +18,7 @@ import (
 	"github.com/gogf/gf/v2/internal/json"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/test/gtest"
+	"github.com/gogf/gf/v2/text/gstr"
 	"github.com/gogf/gf/v2/util/guid"
 )
 
@@ -58,6 +59,156 @@ func Test_Router_Handler_Standard_WithObject(t *testing.T) {
 
 		t.Assert(client.GetContent(ctx, "/test?age=18&name=john"), `{"code":0,"message":"OK","data":{"Id":1,"Age":18,"Name":"john"}}`)
 		t.Assert(client.GetContent(ctx, "/test/error"), `{"code":50,"message":"error","data":{"Id":1,"Age":0,"Name":""}}`)
+	})
+}
+
+type TestStrictHandlerReq struct {
+	g.Meta `path:"/strict-handler" method:"post"`
+	Name   string `json:"name" v:"required"`
+}
+
+type TestStrictHandlerRes struct {
+	Name string `json:"name"`
+}
+
+func Test_Router_Handler_Standard_StrictHandler(t *testing.T) {
+	s := g.Server(guid.S())
+	s.Use(ghttp.MiddlewareHandlerResponse)
+	s.BindStrictHandler(ghttp.NewStrictHandler(func(
+		ctx context.Context, req *TestStrictHandlerReq,
+	) (res *TestStrictHandlerRes, err error) {
+		return &TestStrictHandlerRes{Name: req.Name}, nil
+	}))
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(client.PostContent(ctx, "/strict-handler", `{"name":"john"}`), `{"code":0,"message":"OK","data":{"name":"john"}}`)
+		t.Assert(client.GetContent(ctx, "/strict-handler"), `{"code":65,"message":"Not Found","data":null}`)
+	})
+}
+
+type TestStrictCustomParseReq struct {
+	Name string `v:"required"`
+}
+
+func (r *TestStrictCustomParseReq) Parse(request *ghttp.Request) error {
+	r.Name = "custom-default"
+	if name := request.Get("name").String(); name != "" {
+		r.Name = "custom-" + name
+	}
+	return nil
+}
+
+type TestStrictCustomParseRes struct {
+	Name string `json:"name"`
+}
+
+func Test_Router_Handler_Standard_CustomParse(t *testing.T) {
+	s := g.Server(guid.S())
+	s.Use(ghttp.MiddlewareHandlerResponse)
+	s.BindHandler("/strict-custom-parse", func(
+		ctx context.Context, req *TestStrictCustomParseReq,
+	) (res *TestStrictCustomParseRes, err error) {
+		return &TestStrictCustomParseRes{Name: req.Name}, nil
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(
+			client.GetContent(ctx, "/strict-custom-parse?name=john"),
+			`{"code":0,"message":"OK","data":{"name":"custom-john"}}`,
+		)
+		response := client.GetContent(ctx, "/strict-custom-parse")
+		t.Assert(gstr.Contains(response, `"code":51`), true)
+		t.Assert(gstr.Contains(response, `Name`), true)
+	})
+}
+
+type TestStrictHandlerCustomParseReq struct {
+	g.Meta `path:"/strict-handler-custom-parse" method:"get"`
+	Name   string `v:"required"`
+}
+
+func (r *TestStrictHandlerCustomParseReq) Parse(request *ghttp.Request) error {
+	r.Name = "typed-default"
+	if name := request.Get("name").String(); name != "" {
+		r.Name = "typed-" + name
+	}
+	return nil
+}
+
+type TestStrictHandlerCustomParseRes struct {
+	Name string `json:"name"`
+}
+
+func Test_Router_Handler_Standard_StrictHandlerCustomParse(t *testing.T) {
+	s := g.Server(guid.S())
+	s.Use(ghttp.MiddlewareHandlerResponse)
+	s.BindStrictHandler(ghttp.NewStrictHandler(func(
+		ctx context.Context, req *TestStrictHandlerCustomParseReq,
+	) (res *TestStrictHandlerCustomParseRes, err error) {
+		return &TestStrictHandlerCustomParseRes{Name: req.Name}, nil
+	}))
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(
+			client.GetContent(ctx, "/strict-handler-custom-parse?name=john"),
+			`{"code":0,"message":"OK","data":{"name":"typed-john"}}`,
+		)
+		response := client.GetContent(ctx, "/strict-handler-custom-parse")
+		t.Assert(gstr.Contains(response, `"code":51`), true)
+		t.Assert(gstr.Contains(response, `Name`), true)
+	})
+}
+
+type TestGroupStrictHandlerReq struct {
+	g.Meta `path:"/strict-group" method:"get"`
+	Name   string `query:"name"`
+}
+
+type TestGroupStrictHandlerRes struct {
+	Name string `json:"name"`
+}
+
+func Test_Router_Handler_Standard_GroupStrictHandler(t *testing.T) {
+	s := g.Server(guid.S())
+	s.Use(ghttp.MiddlewareHandlerResponse)
+	s.Group("/api", func(group *ghttp.RouterGroup) {
+		group.BindStrictHandler(ghttp.NewStrictHandler(func(
+			ctx context.Context, req *TestGroupStrictHandlerReq,
+		) (res *TestGroupStrictHandlerRes, err error) {
+			return &TestGroupStrictHandlerRes{Name: req.Name}, nil
+		}))
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(client.GetContent(ctx, "/api/strict-group?name=john"), `{"code":0,"message":"OK","data":{"name":"john"}}`)
 	})
 }
 
@@ -539,6 +690,10 @@ type testHandlerItemGetMetaTagReq struct {
 	g.Meta `path:"/test" method:"get" sm:"hello" tags:"示例"`
 }
 type testHandlerItemGetMetaTagRes struct{}
+type testStrictHandlerItemGetMetaTagReq struct {
+	g.Meta `path:"/strict-meta" method:"post" sm:"strict hello" tags:"strict"`
+}
+type testStrictHandlerItemGetMetaTagRes struct{}
 
 type testHandlerItemGetMetaTag struct {
 }
@@ -568,6 +723,34 @@ func TestHandlerItem_GetMetaTag(t *testing.T) {
 			t.Assert(route.Handler.GetMetaTag("method"), "get")
 			t.Assert(route.Handler.GetMetaTag("sm"), "hello")
 			t.Assert(route.Handler.GetMetaTag("tags"), "示例")
+		}
+	})
+}
+
+func TestHandlerItem_GetMetaTag_StrictHandler(t *testing.T) {
+	s := g.Server(guid.S())
+	s.Use(ghttp.MiddlewareHandlerResponse)
+	s.BindStrictHandler(ghttp.NewStrictHandler(func(
+		ctx context.Context,
+		req *testStrictHandlerItemGetMetaTagReq,
+	) (*testStrictHandlerItemGetMetaTagRes, error) {
+		return &testStrictHandlerItemGetMetaTagRes{}, nil
+	}))
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		routes := s.GetRoutes()
+		for _, route := range routes {
+			if !route.IsServiceHandler {
+				continue
+			}
+			t.Assert(route.Handler.GetMetaTag("path"), "/strict-meta")
+			t.Assert(route.Handler.GetMetaTag("method"), "post")
+			t.Assert(route.Handler.GetMetaTag("sm"), "strict hello")
+			t.Assert(route.Handler.GetMetaTag("tags"), "strict")
 		}
 	})
 }

@@ -38,7 +38,15 @@ const (
 var (
 	// xmlHeaderBytes is the most common XML format header.
 	xmlHeaderBytes = []byte("<?xml")
+
+	requestParserType = reflect.TypeOf((*RequestParser)(nil)).Elem()
 )
+
+// RequestParser customizes strict route request binding.
+// It is only used by normalized routes and gvalid validation still runs after Parse returns.
+type RequestParser interface {
+	Parse(r *Request) error
+}
 
 // Parse is the most commonly used function, which converts request parameters to struct or struct
 // slice. It also automatically validates the struct or every element of the struct slice according
@@ -94,30 +102,14 @@ func (r *Request) doParse(pointer any, requestType int) error {
 			err  error
 			data map[string]any
 		)
-		// Converting.
-		switch requestType {
-		case parseTypeQuery:
-			if data, err = r.doGetQueryStruct(pointer); err != nil {
-				return err
-			}
-		case parseTypeForm:
-			if data, err = r.doGetFormStruct(pointer); err != nil {
-				return err
-			}
-		default:
-			if data, err = r.doGetRequestStruct(pointer); err != nil {
-				return err
-			}
+		if data, err = r.prepareParsedStructData(pointer, requestType); err != nil {
+			return err
 		}
-		// Validation.
-		if r.shouldValidateParsedStruct() {
-			if err = gvalid.New().
-				Bail().
-				Data(pointer).
-				Assoc(data).
-				Run(r.Context()); err != nil {
-				return err
-			}
+		if err = gconv.Struct(data, pointer); err != nil {
+			return err
+		}
+		if err = r.validateParsedStruct(pointer, data); err != nil {
+			return err
 		}
 
 	// Multiple struct, it only supports JSON type post content like:
@@ -128,6 +120,48 @@ func (r *Request) doParse(pointer any, requestType int) error {
 		}
 	}
 	return nil
+}
+
+func (r *Request) parseStrictRouteRequest(pointer any) error {
+	if r.shouldUseCustomRequestParser() {
+		// Custom Parse only replaces parameter assignment; validation remains owned by ghttp.
+		parser, ok := pointer.(RequestParser)
+		if !ok {
+			return gerror.NewCodef(
+				gcode.CodeInvalidParameter,
+				`invalid request parser: "%T" does not implement ghttp.RequestParser`,
+				pointer,
+			)
+		}
+		assoc, err := r.prepareParsedStructData(pointer, parseTypeRequest)
+		if err != nil {
+			return err
+		}
+		if err := parser.Parse(r); err != nil {
+			return err
+		}
+		return r.validateParsedStruct(pointer, assoc)
+	}
+	return r.Parse(pointer)
+}
+
+func (r *Request) prepareParsedStructData(pointer any, requestType int) (data map[string]any, err error) {
+	switch requestType {
+	case parseTypeQuery:
+		return r.prepareQueryStructData(pointer)
+	case parseTypeForm:
+		return r.prepareFormStructData(pointer)
+	default:
+		return r.prepareRequestStructData(pointer)
+	}
+}
+
+func (r *Request) shouldUseCustomRequestParser() bool {
+	if r == nil || r.serveHandler == nil || r.serveHandler.Handler == nil {
+		return false
+	}
+	info := r.serveHandler.Handler.Info
+	return info.IsStrictRoute && info.ReqStructHasCustomParser
 }
 
 func (r *Request) shouldValidateParsedStruct() bool {
@@ -142,6 +176,17 @@ func (r *Request) shouldValidateParsedStruct() bool {
 	// If there are no validation tags and no recursive validation candidates,
 	// running gvalid is a no-op that only adds reflection and allocation cost.
 	return info.ReqStructNeedsValidation
+}
+
+func (r *Request) validateParsedStruct(pointer any, assoc any) error {
+	if !r.shouldValidateParsedStruct() {
+		return nil
+	}
+	validator := gvalid.New().Bail().Data(pointer)
+	if assoc != nil {
+		validator = validator.Assoc(assoc)
+	}
+	return validator.Run(r.Context())
 }
 
 func (r *Request) doParseArray(pointer any, reflectVal reflect.Value) error {

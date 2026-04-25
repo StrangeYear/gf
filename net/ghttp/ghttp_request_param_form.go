@@ -97,6 +97,13 @@ func (r *Request) GetFormStruct(pointer any, mapping ...map[string]string) error
 }
 
 func (r *Request) doGetFormStruct(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
+	if data, err = r.prepareFormStructData(pointer, mapping...); err != nil {
+		return data, err
+	}
+	return data, gconv.Struct(data, pointer, mapping...)
+}
+
+func (r *Request) prepareFormStructData(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
 	r.parseForm()
 	data = r.formMap
 	if data == nil {
@@ -108,5 +115,5 @@ func (r *Request) doGetFormStruct(pointer any, mapping ...map[string]string) (da
 	if err = r.doParseRequestData(data, pointer, mapping...); err != nil {
 		return data, err
 	}
-	return data, gconv.Struct(data, pointer, mapping...)
+	return data, nil
 }

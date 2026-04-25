@@ -325,6 +325,14 @@ func BenchmarkInternal_StrictBindRequestPool(b *testing.B) {
 	benchmarkInternalStrictBind(b, true)
 }
 
+func BenchmarkInternal_StrictHandler(b *testing.B) {
+	benchmarkInternalStrictHandler(b, false)
+}
+
+func BenchmarkInternal_StrictHandlerRequestPool(b *testing.B) {
+	benchmarkInternalStrictHandler(b, true)
+}
+
 func benchmarkInternalStrictBind(b *testing.B, requestStructPoolEnabled bool) {
 	type benchReq struct {
 		Name  string `json:"name" v:"required"`
@@ -355,6 +363,49 @@ func benchmarkInternalStrictBind(b *testing.B, requestStructPoolEnabled bool) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		request, _ := newBenchmarkRequest(s, http.MethodPost, "http://127.0.0.1/bench/strict", payload)
+		request.Header.Set("Content-Type", "application/json")
+		request.serveHandler = &HandlerItemParsed{Handler: handlerItem}
+		request.handlers = []*HandlerItemParsed{request.serveHandler}
+		funcInfo.Func(request)
+		if request.error != nil {
+			b.Fatal(request.error)
+		}
+		request.Response.Flush()
+		closeBenchmarkRequest(b, request)
+	}
+}
+
+func benchmarkInternalStrictHandler(b *testing.B, requestStructPoolEnabled bool) {
+	type benchReq struct {
+		Name  string `json:"name" v:"required"`
+		Email string `json:"email" v:"required|email"`
+		Age   int    `json:"age" v:"min:1|max:200"`
+	}
+
+	s := newBenchmarkServer("bench-strict-handler")
+	s.SetRequestStructPoolEnabled(requestStructPoolEnabled)
+	fixedRes := "john"
+	funcInfo, err := s.checkAndCreateFuncInfo(
+		NewStrictHandler(func(ctx context.Context, req *benchReq) (res *string, err error) {
+			return &fixedRes, nil
+		}),
+		"",
+		"",
+		"",
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+	handlerItem := &HandlerItem{
+		Type: HandlerTypeHandler,
+		Info: funcInfo,
+	}
+	payload := `{"name":"john","email":"john@example.com","age":18}`
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		request, _ := newBenchmarkRequest(s, http.MethodPost, "http://127.0.0.1/bench/strict-handler", payload)
 		request.Header.Set("Content-Type", "application/json")
 		request.serveHandler = &HandlerItemParsed{Handler: handlerItem}
 		request.handlers = []*HandlerItemParsed{request.serveHandler}

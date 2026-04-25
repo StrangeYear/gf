@@ -130,8 +130,13 @@ func (s *Server) setHandler(ctx context.Context, in setHandlerInput) {
 	// Change the registered route according to meta info from its request structure.
 	// It supports multiple methods that are joined using char `,`.
 	// ====================================================================================
-	if handler.Info.Type != nil && handler.Info.Type.NumIn() == 2 {
-		var objectReq = reflect.New(handler.Info.Type.In(1))
+	if handler.Info.ReqStructType != nil || (handler.Info.Type != nil && handler.Info.Type.NumIn() == 2) {
+		var objectReq reflect.Value
+		if handler.Info.ReqStructType != nil {
+			objectReq = reflect.New(handler.Info.ReqStructType)
+		} else {
+			objectReq = reflect.New(handler.Info.Type.In(1))
+		}
 		if v := gmeta.Get(objectReq, gtag.Path); !v.IsEmpty() {
 			uri = v.String()
 		}

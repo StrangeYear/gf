@@ -140,6 +140,13 @@ func (r *Request) GetQueryStruct(pointer any, mapping ...map[string]string) erro
 }
 
 func (r *Request) doGetQueryStruct(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
+	if data, err = r.prepareQueryStructData(pointer, mapping...); err != nil {
+		return data, err
+	}
+	return data, gconv.Struct(data, pointer, mapping...)
+}
+
+func (r *Request) prepareQueryStructData(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
 	r.parseQuery()
 	data = r.GetQueryMap()
 	if data == nil {
@@ -151,5 +158,5 @@ func (r *Request) doGetQueryStruct(pointer any, mapping ...map[string]string) (d
 	if err = r.doParseRequestData(data, pointer, mapping...); err != nil {
 		return data, err
 	}
-	return data, gconv.Struct(data, pointer, mapping...)
+	return data, nil
 }

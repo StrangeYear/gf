@@ -193,6 +193,13 @@ func (r *Request) GetRequestStruct(pointer any, mapping ...map[string]string) er
 }
 
 func (r *Request) doGetRequestStruct(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
+	if data, err = r.prepareRequestStructData(pointer, mapping...); err != nil {
+		return data, err
+	}
+	return data, gconv.Struct(data, pointer, mapping...)
+}
+
+func (r *Request) prepareRequestStructData(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
 	data = r.GetRequestMap()
 	if data == nil {
 		data = map[string]any{}
@@ -212,7 +219,7 @@ func (r *Request) doGetRequestStruct(pointer any, mapping ...map[string]string) 
 		return data, err
 	}
 
-	return data, gconv.Struct(data, pointer, mapping...)
+	return data, nil
 }
 
 // mergeDefaultStructValue merges the request parameters with default values from struct tag definition.

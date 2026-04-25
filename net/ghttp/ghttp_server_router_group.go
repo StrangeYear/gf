@@ -180,8 +180,15 @@ func (g *RouterGroup) Bind(handlerOrObject ...any) *RouterGroup {
 			originValueAndKind = reflection.OriginValueAndKind(item)
 		)
 
-		switch originValueAndKind.OriginKind {
-		case reflect.Func, reflect.Struct:
+		switch {
+		case isStrictHandler(item):
+			group = group.preBindToLocalArray(
+				groupBindTypeHandler,
+				"/",
+				item,
+			)
+
+		case originValueAndKind.OriginKind == reflect.Func || originValueAndKind.OriginKind == reflect.Struct:
 			group = group.preBindToLocalArray(
 				groupBindTypeHandler,
 				"/",
@@ -196,6 +203,16 @@ func (g *RouterGroup) Bind(handlerOrObject ...any) *RouterGroup {
 		}
 	}
 	return group
+}
+
+// BindStrictHandler registers a typed strict handler whose route metadata is read from its request struct.
+func (g *RouterGroup) BindStrictHandler(handler *StrictHandler) *RouterGroup {
+	return g.Clone().preBindToLocalArray(groupBindTypeHandler, "/", handler)
+}
+
+func isStrictHandler(object any) bool {
+	_, ok := object.(*StrictHandler)
+	return ok
 }
 
 // ALL register an http handler to give the route pattern and all http methods.
@@ -350,7 +367,7 @@ func (g *RouterGroup) doBindRoutersToServer(ctx context.Context, item *preBindIt
 	}
 	switch bindType {
 	case groupBindTypeHandler:
-		if reflect.ValueOf(object).Kind() == reflect.Func {
+		if isStrictHandler(object) || reflect.ValueOf(object).Kind() == reflect.Func {
 			funcInfo, err := g.server.checkAndCreateFuncInfo(object, "", "", "")
 			if err != nil {
 				g.server.Logger().Fatal(ctx, err.Error())
