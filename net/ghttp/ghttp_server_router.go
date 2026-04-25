@@ -39,6 +39,32 @@ type routeTreeNode struct {
 	list []*HandlerItem
 }
 
+type routeFastNode struct {
+	// path is a compressed static prefix, following the same radix idea used by high-performance routers.
+	path string
+	// indices keeps the first byte of every static child so lookup avoids a map on the hot path.
+	indices  string
+	children []*routeFastNode
+	// param stores the single :name branch for this path level.
+	param             *routeFastNode
+	paramName         string
+	paramNameConflict bool
+	// catchAll stores the tail *name branch.
+	catchAll             *routeFastNode
+	catchAllName         string
+	catchAllNameConflict bool
+	// list keeps simple REST handlers in the same priority order as the compatibility tree.
+	list []*HandlerItem
+	// fallback keeps complex rules out of the hot tree while preserving matcher compatibility on overlap.
+	fallback []*HandlerItem
+}
+
+type routeFastCandidate struct {
+	list           []*HandlerItem
+	values         map[string]string
+	valuesReliable bool
+}
+
 // routerMapKey creates and returns a unique router key for given parameters.
 // This key is used for Server.routerMap attribute, which is mainly for checks for
 // repeated router registering.
@@ -273,7 +299,203 @@ func (s *Server) doSetHandler(
 
 	// Append the route.
 	s.routesMap[routerKey] = append(s.routesMap[routerKey], handler)
+	s.setFastHandler(domain, uri, handler)
 	s.clearServeCache(ctx)
+}
+
+func (s *Server) setFastHandler(domain, uri string, handler *HandlerItem) {
+	if s.serveFastTree == nil {
+		s.serveFastTree = make(map[string]*routeFastNode)
+	}
+	root := s.serveFastTree[domain]
+	if root == nil {
+		root = &routeFastNode{}
+		s.serveFastTree[domain] = root
+	}
+	fastPath, ok := compileFastRoutePath(uri)
+	if !ok {
+		root.fallback = insertHandlerItemByPriority(root.fallback, handler, s.compareRouterPriority)
+		return
+	}
+	root.insertFastPath(fastPath, handler, s.compareRouterPriority)
+}
+
+func compileFastRoutePath(uri string) (string, bool) {
+	if _, ok := compileFastRouteSegments(uri); !ok {
+		return "", false
+	}
+	if !strings.Contains(uri, "{") {
+		return uri, true
+	}
+	// A whole-segment {name} route is equivalent to :name for the radix fast path.
+	parts := strings.Split(uri[1:], "/")
+	var builder strings.Builder
+	builder.Grow(len(uri))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		builder.WriteByte('/')
+		if name, ok := parseRouteParamSegment(part); ok {
+			builder.WriteByte(':')
+			builder.WriteString(name)
+			continue
+		}
+		builder.WriteString(part)
+	}
+	if builder.Len() == 0 {
+		return "/", true
+	}
+	return builder.String(), true
+}
+
+func compileFastRouteSegments(uri string) ([]routeSegmentMatcher, bool) {
+	if uri == "/" {
+		return nil, true
+	}
+	parts := strings.Split(uri[1:], "/")
+	segments := make([]routeSegmentMatcher, 0, len(parts))
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		segment, ok := compileRouteSegmentMatcher(part)
+		if !ok {
+			return nil, false
+		}
+		switch segment.kind {
+		case routeSegmentMatcherKindStatic, routeSegmentMatcherKindNamed:
+		case routeSegmentMatcherKindCatchAll:
+			if index != len(parts)-1 {
+				return nil, false
+			}
+		default:
+			return nil, false
+		}
+		segments = append(segments, segment)
+	}
+	return segments, true
+}
+
+func (n *routeFastNode) insertFastPath(
+	uri string, handler *HandlerItem, compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) {
+	if uri == "/" {
+		n.list = insertHandlerItemByPriority(n.list, handler, compare)
+		return
+	}
+	for len(uri) > 0 {
+		wildcardIndex, wildcardKind := findFastRouteWildcard(uri)
+		switch {
+		case wildcardIndex < 0:
+			n = n.insertStaticPrefix(uri)
+			n.list = insertHandlerItemByPriority(n.list, handler, compare)
+			return
+
+		case wildcardIndex > 0:
+			staticPrefix := uri[:wildcardIndex]
+			if wildcardKind == '*' && staticPrefix[len(staticPrefix)-1] == '/' {
+				// A tail catch-all route like /user/*action must also match /user.
+				staticPrefix = staticPrefix[:len(staticPrefix)-1]
+			}
+			n = n.insertStaticPrefix(staticPrefix)
+			uri = uri[wildcardIndex:]
+
+		default:
+			switch wildcardKind {
+			case ':':
+				endIndex := strings.IndexByte(uri, '/')
+				name := ""
+				if endIndex < 0 {
+					name = uri[1:]
+					uri = ""
+				} else {
+					name = uri[1:endIndex]
+					uri = uri[endIndex:]
+				}
+				if n.param == nil {
+					n.param = &routeFastNode{}
+					n.paramName = name
+				} else if n.paramName != name {
+					n.paramNameConflict = true
+				}
+				n = n.param
+
+			case '*':
+				name := uri[1:]
+				if n.catchAll == nil {
+					n.catchAll = &routeFastNode{}
+					n.catchAllName = name
+				} else if n.catchAllName != name {
+					n.catchAllNameConflict = true
+				}
+				n.catchAll.list = insertHandlerItemByPriority(n.catchAll.list, handler, compare)
+				return
+			}
+		}
+	}
+	n.list = insertHandlerItemByPriority(n.list, handler, compare)
+}
+
+func findFastRouteWildcard(path string) (index int, kind byte) {
+	for i := 0; i < len(path); i++ {
+		switch path[i] {
+		case ':', '*':
+			if i == 0 || path[i-1] == '/' {
+				return i, path[i]
+			}
+		}
+	}
+	return -1, 0
+}
+
+func (n *routeFastNode) insertStaticPrefix(path string) *routeFastNode {
+	for len(path) > 0 {
+		childIndex := strings.IndexByte(n.indices, path[0])
+		if childIndex < 0 {
+			child := &routeFastNode{path: path}
+			n.indices += string(path[0])
+			n.children = append(n.children, child)
+			return child
+		}
+
+		child := n.children[childIndex]
+		commonLength := longestCommonPrefix(path, child.path)
+		if commonLength == len(child.path) {
+			n = child
+			path = path[commonLength:]
+			continue
+		}
+
+		oldChild := *child
+		oldChild.path = child.path[commonLength:]
+		*child = routeFastNode{
+			path:     child.path[:commonLength],
+			indices:  string(oldChild.path[0]),
+			children: []*routeFastNode{&oldChild},
+		}
+		if commonLength == len(path) {
+			return child
+		}
+		newChild := &routeFastNode{path: path[commonLength:]}
+		child.indices += string(newChild.path[0])
+		child.children = append(child.children, newChild)
+		return newChild
+	}
+	return n
+}
+
+func longestCommonPrefix(a, b string) int {
+	max := len(a)
+	if len(b) < max {
+		max = len(b)
+	}
+	for i := 0; i < max; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return max
 }
 
 func (s *Server) clearServeCache(ctx context.Context) {

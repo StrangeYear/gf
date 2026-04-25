@@ -86,7 +86,10 @@ func (s *Server) getHandlersWithCache(r *Request) (parsedItems []*HandlerItemPar
 		}
 		return item.parsedItems, item.serveItem, item.hasHook, item.hasServe
 	}
-	parsedItems, serveItem, hasHook, hasServe = s.searchHandlers(method, path, host)
+	parsedItems, serveItem, hasHook, hasServe = s.searchFastHandlers(method, path, host)
+	if parsedItems == nil && s.config.RouteComplexEnabled {
+		parsedItems, serveItem, hasHook, hasServe = s.searchHandlers(method, path, host)
+	}
 	if cacheItem := newHandlerCacheItem(parsedItems, serveItem, hasHook, hasServe); cacheItem != nil {
 		if err = s.serveCache.Set(
 			ctx,
@@ -98,6 +101,209 @@ func (s *Server) getHandlersWithCache(r *Request) (parsedItems []*HandlerItemPar
 		}
 	}
 	return
+}
+
+func (s *Server) searchFastHandlers(method, path, domain string) (
+	parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool,
+) {
+	if len(path) == 0 {
+		return nil, nil, false, false
+	}
+	path = normalizeRouterSearchPath(path)
+	var (
+		array       []string
+		arrayBuffer [16]string
+	)
+	array = splitRouterSearchPath(path, arrayBuffer[:0])
+	searchDomain := func(domainItem string) {
+		if parsedItems != nil {
+			return
+		}
+		root := s.serveFastTree[domainItem]
+		if root == nil {
+			return
+		}
+		parsedItems, serveItem, hasHook, hasServe = root.search(method, path, array, s.config.RouteComplexEnabled)
+	}
+	searchDomain(DefaultDomainName)
+	searchDomain(domain)
+	return
+}
+
+func (n *routeFastNode) search(method, path string, parts []string, checkFallback bool) (
+	parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool,
+) {
+	var (
+		candidateBuffer [16]routeFastCandidate
+		candidates      = candidateBuffer[:0]
+		node            = n
+		remainingPath   = path
+		values          map[string]string
+		valuesReliable  = true
+		middlewareCount = 0
+		parsedItemList  = make([]*HandlerItemParsed, 0, 2)
+		seenHandlers    routeSearchSeen
+	)
+	for {
+		if node.catchAll != nil && len(node.catchAll.list) > 0 {
+			candidates = appendRouteFastCandidate(
+				candidates,
+				node.catchAll.list,
+				valuesWithFastRouteCatchAll(values, node.catchAllName, remainingPath),
+				valuesReliable && !node.catchAllNameConflict,
+			)
+		}
+		if remainingPath == "" {
+			if len(node.list) > 0 {
+				candidates = appendRouteFastCandidate(candidates, node.list, values, valuesReliable)
+			}
+			break
+		}
+		if child := node.findStaticChild(remainingPath[0]); child != nil && strings.HasPrefix(remainingPath, child.path) {
+			remainingPath = remainingPath[len(child.path):]
+			node = child
+			continue
+		}
+		if node.param != nil && remainingPath[0] != '/' {
+			endIndex := strings.IndexByte(remainingPath, '/')
+			paramValue := remainingPath
+			if endIndex >= 0 {
+				paramValue = remainingPath[:endIndex]
+				remainingPath = remainingPath[endIndex:]
+			} else {
+				remainingPath = ""
+			}
+			if paramValue == "" {
+				break
+			}
+			if !node.paramNameConflict {
+				values = setFastRouteValue(values, node.paramName, paramValue)
+			} else {
+				valuesReliable = false
+			}
+			node = node.param
+			continue
+		}
+		break
+	}
+	if len(candidates) == 0 {
+		return nil, nil, false, false
+	}
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		for _, item := range candidate.list {
+			if seenHandlers.Has(item.Id) {
+				continue
+			}
+			if hasServe {
+				switch item.Type {
+				case HandlerTypeHandler, HandlerTypeObject:
+					continue
+				}
+			}
+			if item.Router.Method != defaultMethod && item.Router.Method != method {
+				continue
+			}
+			itemValues := candidate.values
+			if !candidate.valuesReliable {
+				matched, matchedValues := item.Router.match(path, parts)
+				if !matched {
+					continue
+				}
+				itemValues = matchedValues
+			}
+			parsedItem := &HandlerItemParsed{item, itemValues}
+			switch item.Type {
+			case HandlerTypeHandler, HandlerTypeObject:
+				hasServe = true
+				serveItem = parsedItem
+				parsedItemList = append(parsedItemList, parsedItem)
+
+			case HandlerTypeMiddleware:
+				parsedItemList = append(parsedItemList, nil)
+				copy(parsedItemList[middlewareCount+1:], parsedItemList[middlewareCount:])
+				parsedItemList[middlewareCount] = parsedItem
+				middlewareCount++
+
+			case HandlerTypeHook:
+				hasHook = true
+				parsedItemList = append(parsedItemList, parsedItem)
+
+			default:
+				panic(gerror.Newf(`invalid handler type %s`, item.Type))
+			}
+		}
+	}
+	if len(parsedItemList) == 0 {
+		return nil, nil, false, false
+	}
+	if checkFallback && n.matchesFallback(method, path, parts) {
+		return nil, nil, false, false
+	}
+	return parsedItemList, serveItem, hasHook, hasServe
+}
+
+func appendRouteFastCandidate(
+	candidates []routeFastCandidate, list []*HandlerItem, values map[string]string, valuesReliable bool,
+) []routeFastCandidate {
+	return append(candidates, routeFastCandidate{
+		list:           list,
+		values:         values,
+		valuesReliable: valuesReliable,
+	})
+}
+
+func (n *routeFastNode) findStaticChild(firstByte byte) *routeFastNode {
+	if index := strings.IndexByte(n.indices, firstByte); index >= 0 {
+		return n.children[index]
+	}
+	return nil
+}
+
+func setFastRouteValue(values map[string]string, name, value string) map[string]string {
+	if name == "" {
+		return values
+	}
+	if len(value) > 0 && value[0] == '/' {
+		value = value[1:]
+	}
+	if values == nil {
+		values = make(map[string]string, 1)
+	}
+	values[name] = decodeRouteValue(value)
+	return values
+}
+
+func valuesWithFastRouteCatchAll(values map[string]string, name, value string) map[string]string {
+	if name == "" {
+		return values
+	}
+	values = cloneRouteValues(values)
+	return setFastRouteValue(values, name, value)
+}
+
+func cloneRouteValues(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values)+1)
+	for k, v := range values {
+		cloned[k] = v
+	}
+	return cloned
+}
+
+func (n *routeFastNode) matchesFallback(method, path string, parts []string) bool {
+	// Complex routes keep the legacy matcher as source of truth only when they overlap the current request.
+	for _, item := range n.fallback {
+		if item.Router.Method != defaultMethod && item.Router.Method != method {
+			continue
+		}
+		if matched, _ := item.Router.match(path, parts); matched {
+			return true
+		}
+	}
+	return false
 }
 
 func newHandlerCacheItem(

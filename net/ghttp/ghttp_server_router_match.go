@@ -63,7 +63,7 @@ func (r *Router) matchWithRegex(path string) (matched bool, values map[string]st
 	if len(r.RegNames) > 0 && len(match) > len(r.RegNames) {
 		values = make(map[string]string, len(r.RegNames))
 		for i, name := range r.RegNames {
-			values[name], _ = gurl.Decode(match[i+1])
+			values[name] = decodeRouteValue(match[i+1])
 		}
 	}
 	return true, values
@@ -88,7 +88,7 @@ func (m *routeMatcher) match(path string, parts []string) (matched bool, values 
 						if values == nil {
 							values = m.makeValues()
 						}
-						values[segment.value], _ = gurl.Decode(captured)
+						values[segment.value] = decodeRouteValue(captured)
 					} else if values == nil {
 						values = m.makeValues()
 						values[segment.value] = ""
@@ -117,7 +117,7 @@ func (m *routeMatcher) match(path string, parts []string) (matched bool, values 
 						if values == nil {
 							values = m.makeValues()
 						}
-						values[segment.value], _ = gurl.Decode(part)
+						values[segment.value] = decodeRouteValue(part)
 					}
 
 				case routeSegmentMatcherKindPattern:
@@ -222,6 +222,13 @@ func compileRouteSegmentMatcher(segment string) (routeSegmentMatcher, bool) {
 		}, true
 	}
 
+	if name, ok := parseRouteParamSegment(segment); ok {
+		return routeSegmentMatcher{
+			kind:         routeSegmentMatcherKindNamed,
+			value:        name,
+			captureCount: 1,
+		}, true
+	}
 	if strings.Contains(segment, "*") {
 		return routeSegmentMatcher{}, false
 	}
@@ -241,6 +248,17 @@ func compileRouteSegmentMatcher(segment string) (routeSegmentMatcher, bool) {
 		parts:        parts,
 		captureCount: captureCount,
 	}, true
+}
+
+func parseRouteParamSegment(segment string) (string, bool) {
+	if len(segment) < 3 || segment[0] != '{' || segment[len(segment)-1] != '}' {
+		return "", false
+	}
+	name := segment[1 : len(segment)-1]
+	if name == "" || strings.ContainsAny(name, "{}") {
+		return "", false
+	}
+	return name, true
 }
 
 func compileRoutePatternParts(segment string) ([]routeSegmentPart, int, bool) {
@@ -296,9 +314,17 @@ func matchRoutePatternSegment(
 		values = make(map[string]string, valueCapacity)
 	}
 	for _, capture := range captures {
-		values[capture.name], _ = gurl.Decode(capture.value)
+		values[capture.name] = decodeRouteValue(capture.value)
 	}
 	return true, values
+}
+
+func decodeRouteValue(value string) string {
+	if !strings.ContainsAny(value, "%+") {
+		return value
+	}
+	decoded, _ := gurl.Decode(value)
+	return decoded
 }
 
 func matchRoutePatternParts(

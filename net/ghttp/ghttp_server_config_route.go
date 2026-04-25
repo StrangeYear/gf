@@ -6,6 +6,8 @@
 
 package ghttp
 
+import "context"
+
 // SetRewrite sets rewrites for static URI for server.
 func (s *Server) SetRewrite(uri string, rewrite string) {
 	s.config.Rewrites[uri] = rewrite
@@ -21,4 +23,10 @@ func (s *Server) SetRewriteMap(rewrites map[string]string) {
 // SetRouteOverWrite sets the RouteOverWrite for server.
 func (s *Server) SetRouteOverWrite(enabled bool) {
 	s.config.RouteOverWrite = enabled
+}
+
+// SetRouteComplexEnabled sets whether complex route compatibility matching is enabled.
+func (s *Server) SetRouteComplexEnabled(enabled bool) {
+	s.config.RouteComplexEnabled = enabled
+	s.clearServeCache(context.TODO())
 }

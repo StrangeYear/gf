@@ -265,6 +265,9 @@ type ServerConfig struct {
 	// RouteOverWrite allows to overwrite the route if duplicated.
 	RouteOverWrite bool `json:"routeOverWrite"`
 
+	// RouteComplexEnabled enables compatibility matching for complex route patterns like "{name}.json".
+	RouteComplexEnabled bool `json:"routeComplexEnabled"`
+
 	// DumpRouterMap specifies whether automatically dumps router map when server starts.
 	DumpRouterMap bool `json:"dumpRouterMap"`
 }
@@ -306,6 +309,7 @@ func NewConfig() ServerConfig {
 		ErrorLogPattern:         "error-{Ymd}.log",
 		AccessLogEnabled:        false,
 		AccessLogPattern:        "access-{Ymd}.log",
+		RouteComplexEnabled:     true,
 		DumpRouterMap:           true,
 		ClientMaxBodySize:       8 * 1024 * 1024, // 8MB
 		FormParsingMemory:       1024 * 1024,     // 1MB
