@@ -9,9 +9,23 @@ package ghttp
 import (
 	"bytes"
 	"compress/gzip"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
+
+var gzipCompressBufferPool = sync.Pool{
+	New: func() any {
+		return bytes.NewBuffer(nil)
+	},
+}
+
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(io.Discard)
+	},
+}
 
 // MiddlewareGzip is a middleware that compresses HTTP response using gzip compression.
 // Note that it does not compress responses if:
@@ -47,11 +61,19 @@ func MiddlewareGzip(r *Request) {
 
 	// Try to compress the response
 	var (
-		compressed bytes.Buffer
+		compressed = gzipCompressBufferPool.Get().(*bytes.Buffer)
+		gzipWriter = gzipWriterPool.Get().(*gzip.Writer)
 		logger     = r.Server.Logger()
 		ctx        = r.Context()
 	)
-	gzipWriter := gzip.NewWriter(&compressed)
+	compressed.Reset()
+	gzipWriter.Reset(compressed)
+	defer func() {
+		gzipWriter.Reset(io.Discard)
+		gzipWriterPool.Put(gzipWriter)
+		compressed.Reset()
+		gzipCompressBufferPool.Put(compressed)
+	}()
 	if _, err := gzipWriter.Write(buffer); err != nil {
 		logger.Warningf(ctx, "gzip compression failed: %+v", err)
 		return

@@ -10,7 +10,14 @@ package response
 import (
 	"bytes"
 	"net/http"
+	"sync"
 )
+
+var bufferPool = sync.Pool{
+	New: func() any {
+		return bytes.NewBuffer(nil)
+	},
+}
 
 // BufferWriter is the custom writer for http response with buffer.
 type BufferWriter struct {
@@ -22,7 +29,7 @@ type BufferWriter struct {
 func NewBufferWriter(writer http.ResponseWriter) *BufferWriter {
 	return &BufferWriter{
 		Writer: NewWriter(writer),
-		buffer: bytes.NewBuffer(nil),
+		buffer: bufferPool.Get().(*bytes.Buffer),
 	}
 }
 
@@ -65,6 +72,15 @@ func (w *BufferWriter) SetBuffer(data []byte) {
 // ClearBuffer clears the response buffer.
 func (w *BufferWriter) ClearBuffer() {
 	w.buffer.Reset()
+}
+
+// Close releases the internal buffer after request handling is done.
+func (w *BufferWriter) Close() {
+	if w.buffer != nil {
+		w.buffer.Reset()
+		bufferPool.Put(w.buffer)
+		w.buffer = nil
+	}
 }
 
 // WriteHeader implements the interface of http.BufferWriter.WriteHeader.

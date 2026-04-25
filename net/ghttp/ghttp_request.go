@@ -17,7 +17,6 @@ import (
 	"github.com/gogf/gf/v2/os/gsession"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/os/gview"
-	"github.com/gogf/gf/v2/text/gregex"
 	"github.com/gogf/gf/v2/text/gstr"
 	"github.com/gogf/gf/v2/util/guid"
 )
@@ -39,28 +38,29 @@ type Request struct {
 	// Private attributes for internal usage purpose.
 	// =================================================================================================================
 
-	handlers        []*HandlerItemParsed // All matched handlers containing handler, hook and middleware for this request.
-	serveHandler    *HandlerItemParsed   // Real business handler serving for this request, not hook or middleware handler.
-	handlerResponse any                  // Handler response object for Request/Response handler.
-	hasHookHandler  bool                 // A bool marking whether there's hook handler in the handlers for performance purpose.
-	hasServeHandler bool                 // A bool marking whether there's serving handler in the handlers for performance purpose.
-	parsedQuery     bool                 // A bool marking whether the GET parameters parsed.
-	parsedBody      bool                 // A bool marking whether the request body parsed.
-	parsedForm      bool                 // A bool marking whether request Form parsed for HTTP method PUT, POST, PATCH.
-	paramsMap       map[string]any       // Custom parameters map.
-	routerMap       map[string]string    // Router parameters map, which might be nil if there are no router parameters.
-	queryMap        map[string]any       // Query parameters map, which is nil if there's no query string.
-	formMap         map[string]any       // Form parameters map, which is nil if there's no form of data from the client.
-	bodyMap         map[string]any       // Body parameters map, which might be nil if their nobody content.
-	error           error                // Current executing error of the request.
-	exitAll         bool                 // A bool marking whether current request is exited.
-	parsedHost      string               // The parsed host name for current host used by GetHost function.
-	clientIp        string               // The parsed client ip for current host used by GetClientIp function.
-	bodyContent     []byte               // Request body content.
-	isFileRequest   bool                 // A bool marking whether current request is file serving.
-	viewObject      *gview.View          // Custom template view engine object for this response.
-	viewParams      gview.Params         // Custom template view variables for this response.
-	originUrlPath   string               // Original URL path that passed from client.
+	handlers          []*HandlerItemParsed // All matched handlers containing handler, hook and middleware for this request.
+	serveHandler      *HandlerItemParsed   // Real business handler serving for this request, not hook or middleware handler.
+	handlerResponse   any                  // Handler response object for Request/Response handler.
+	hasHookHandler    bool                 // A bool marking whether there's hook handler in the handlers for performance purpose.
+	hasServeHandler   bool                 // A bool marking whether there's serving handler in the handlers for performance purpose.
+	parsedQuery       bool                 // A bool marking whether the GET parameters parsed.
+	parsedBody        bool                 // A bool marking whether the request body parsed.
+	parsedForm        bool                 // A bool marking whether request Form parsed for HTTP method PUT, POST, PATCH.
+	paramsMap         map[string]any       // Custom parameters map.
+	routerMap         map[string]string    // Router parameters map, which might be nil if there are no router parameters.
+	queryMap          map[string]any       // Query parameters map, which is nil if there's no query string.
+	formMap           map[string]any       // Form parameters map, which is nil if there's no form of data from the client.
+	bodyMap           map[string]any       // Body parameters map, which might be nil if their nobody content.
+	error             error                // Current executing error of the request.
+	exitAll           bool                 // A bool marking whether current request is exited.
+	parsedHost        string               // The parsed host name for current host used by GetHost function.
+	clientIp          string               // The parsed client ip for current host used by GetClientIp function.
+	bodyContent       []byte               // Request body content.
+	isFileRequest     bool                 // A bool marking whether current request is file serving.
+	viewObject        *gview.View          // Custom template view engine object for this response.
+	viewParams        gview.Params         // Custom template view variables for this response.
+	originUrlPath     string               // Original URL path that passed from client.
+	incomingSessionId string               // Session id from the incoming request.
 }
 
 // staticFile is the file struct for static file service.
@@ -73,16 +73,17 @@ type staticFile struct {
 // newRequest creates and returns a new request object.
 func newRequest(s *Server, r *http.Request, w http.ResponseWriter) *Request {
 	request := &Request{
-		Server:        s,
-		Request:       r,
-		Response:      newResponse(s, w),
-		EnterTime:     gtime.Now(),
-		originUrlPath: r.URL.Path,
+		Server:            s,
+		Request:           r,
+		Response:          newResponse(s, w),
+		EnterTime:         gtime.Now(),
+		originUrlPath:     r.URL.Path,
+		incomingSessionId: getSessionIdFromRequest(r, s.GetSessionIdName()),
 	}
 	request.Cookie = GetCookie(request)
 	request.Session = s.sessionManager.New(
 		r.Context(),
-		request.GetSessionId(),
+		request.incomingSessionId,
 	)
 	request.Response.Request = request
 	request.Middleware = &middleware{
@@ -163,12 +164,7 @@ func (r *Request) GetHeader(key string, def ...string) string {
 // GetHost returns current request host name, which might be a domain or an IP without port.
 func (r *Request) GetHost() string {
 	if len(r.parsedHost) == 0 {
-		array, _ := gregex.MatchString(`(.+):(\d+)`, r.Host)
-		if len(array) > 1 {
-			r.parsedHost = array[1]
-		} else {
-			r.parsedHost = r.Host
-		}
+		r.parsedHost = stripPortFromHost(r.Host)
 	}
 	return r.parsedHost
 }
@@ -217,11 +213,7 @@ func (r *Request) GetClientIp() string {
 
 // GetRemoteIp returns the ip from RemoteAddr.
 func (r *Request) GetRemoteIp() string {
-	array, _ := gregex.MatchString(`(.+):(\d+)`, r.RemoteAddr)
-	if len(array) > 1 {
-		return strings.Trim(array[1], "[]")
-	}
-	return r.RemoteAddr
+	return stripPortFromHost(r.RemoteAddr)
 }
 
 // GetSchema returns the schema of this request.
@@ -251,9 +243,16 @@ func (r *Request) GetUrl() string {
 
 // GetSessionId retrieves and returns session id from cookie or header.
 func (r *Request) GetSessionId() string {
-	id := r.Cookie.GetSessionId()
+	if r.Cookie != nil && r.Cookie.data != nil {
+		id := r.Cookie.GetSessionId()
+		if id == "" {
+			id = r.Header.Get(r.Server.GetSessionIdName())
+		}
+		return id
+	}
+	id := r.incomingSessionId
 	if id == "" {
-		id = r.Header.Get(r.Server.GetSessionIdName())
+		id = getSessionIdFromRequest(r.Request, r.Server.GetSessionIdName())
 	}
 	return id
 }
@@ -282,4 +281,31 @@ func (r *Request) ReloadParam() {
 	r.parsedForm = false
 	r.parsedQuery = false
 	r.bodyContent = nil
+}
+
+func stripPortFromHost(value string) string {
+	if value == "" {
+		return ""
+	}
+	if value[0] == '[' {
+		if endIndex := strings.LastIndexByte(value, ']'); endIndex > 0 {
+			return value[1:endIndex]
+		}
+	}
+	if lastColonIndex := strings.LastIndexByte(value, ':'); lastColonIndex > 0 {
+		if strings.IndexByte(value[:lastColonIndex], ':') < 0 {
+			return value[:lastColonIndex]
+		}
+	}
+	return strings.Trim(value, "[]")
+}
+
+func getSessionIdFromRequest(r *http.Request, sessionIdName string) string {
+	if r == nil || sessionIdName == "" {
+		return ""
+	}
+	if cookie, err := r.Cookie(sessionIdName); err == nil && cookie != nil {
+		return cookie.Value
+	}
+	return r.Header.Get(sessionIdName)
 }

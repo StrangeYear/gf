@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/gogf/gf/v2/container/glist"
 	"github.com/gogf/gf/v2/container/gtype"
 	"github.com/gogf/gf/v2/debug/gdebug"
 	"github.com/gogf/gf/v2/errors/gcode"
@@ -29,6 +28,15 @@ var (
 	// handlerIdGenerator is handler item id generator.
 	handlerIdGenerator = gtype.NewInt()
 )
+
+type routeTreeNode struct {
+	// Static children are keyed by exact path segments.
+	children map[string]*routeTreeNode
+	// fuzz stores the single fuzzy branch for :name, *any, and {field} style segments.
+	fuzz *routeTreeNode
+	// list keeps matched handlers in priority order for this routing node.
+	list []*HandlerItem
+}
 
 // routerMapKey creates and returns a unique router key for given parameters.
 // This key is used for Server.routerMap attribute, which is mainly for checks for
@@ -185,17 +193,18 @@ func (s *Server) doSetHandler(
 		Priority: strings.Count(uri[1:], "/"),
 	}
 	handler.Router.RegRule, handler.Router.RegNames = s.patternToRegular(uri)
+	handler.Router.matcher = newRouteMatcher(uri)
 
 	if _, ok := s.serveTree[domain]; !ok {
-		s.serveTree[domain] = make(map[string]any)
+		s.serveTree[domain] = &routeTreeNode{}
 	}
 	// List array, very important for router registering.
 	// There may be multiple lists adding into this array when searching from root to leaf.
 	var (
 		array []string
-		lists = make([]*glist.List, 0)
+		lists = make([]*[]*HandlerItem, 0)
 	)
-	if strings.EqualFold("/", uri) {
+	if uri == "/" {
 		array = []string{"/"}
 	} else {
 		array = strings.Split(uri[1:], "/")
@@ -223,54 +232,38 @@ func (s *Server) doSetHandler(
 			part = "*fuzz"
 			// If it's a fuzzy node, it creates a "*list" item - which is a list - in the hash map.
 			// All the sub router items from this fuzzy node will also be added to its "*list" item.
-			if v, ok := p.(map[string]any)["*list"]; !ok {
-				newListForFuzzy := glist.New()
-				p.(map[string]any)["*list"] = newListForFuzzy
-				lists = append(lists, newListForFuzzy)
-			} else {
-				lists = append(lists, v.(*glist.List))
-			}
+			lists = append(lists, &p.list)
 		}
 		// Make a new bucket for the current node.
-		if _, ok := p.(map[string]any)[part]; !ok {
-			p.(map[string]any)[part] = make(map[string]any)
+		var next *routeTreeNode
+		if part == "*fuzz" {
+			if p.fuzz == nil {
+				p.fuzz = &routeTreeNode{}
+			}
+			next = p.fuzz
+		} else {
+			if p.children == nil {
+				p.children = make(map[string]*routeTreeNode)
+			}
+			if p.children[part] == nil {
+				p.children[part] = &routeTreeNode{}
+			}
+			next = p.children[part]
 		}
 		// Loop to next bucket.
-		p = p.(map[string]any)[part]
+		p = next
 		// The leaf is a hash map and must have an item named "*list", which contains the router item.
 		// The leaf can be furthermore extended by adding more ket-value pairs into its map.
 		// Note that the `v != "*fuzz"` comparison is required as the list might be added in the former
 		// fuzzy checks.
 		if i == len(array)-1 && part != "*fuzz" {
-			if v, ok := p.(map[string]any)["*list"]; !ok {
-				leafList := glist.New()
-				p.(map[string]any)["*list"] = leafList
-				lists = append(lists, leafList)
-			} else {
-				lists = append(lists, v.(*glist.List))
-			}
+			lists = append(lists, &p.list)
 		}
 	}
 	// It iterates the list array of `lists`, compares priorities and inserts the new router item in
 	// the proper position of each list. The priority of the list is ordered from high to low.
-	var item *HandlerItem
 	for _, l := range lists {
-		pushed := false
-		for e := l.Front(); e != nil; e = e.Next() {
-			item = e.Value.(*HandlerItem)
-			// Checks the priority whether inserting the route item before current item,
-			// which means it has higher priority.
-			if s.compareRouterPriority(handler, item) {
-				l.InsertBefore(e, handler)
-				pushed = true
-				goto end
-			}
-		}
-	end:
-		// Just push back in default.
-		if !pushed {
-			l.PushBack(handler)
-		}
+		*l = insertHandlerItemByPriority(*l, handler, s.compareRouterPriority)
 	}
 	// Initialize the route map item.
 	if _, ok := s.routesMap[routerKey]; !ok {
@@ -279,6 +272,22 @@ func (s *Server) doSetHandler(
 
 	// Append the route.
 	s.routesMap[routerKey] = append(s.routesMap[routerKey], handler)
+}
+
+func insertHandlerItemByPriority(
+	items []*HandlerItem, handler *HandlerItem, compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) []*HandlerItem {
+	for index, item := range items {
+		// Checks the priority whether inserting the route item before current item,
+		// which means it has higher priority.
+		if compare(handler, item) {
+			items = append(items, nil)
+			copy(items[index+1:], items[index:])
+			items[index] = handler
+			return items
+		}
+	}
+	return append(items, handler)
 }
 
 func (s *Server) isValidMethod(method string) bool {

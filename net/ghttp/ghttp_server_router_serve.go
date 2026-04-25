@@ -12,12 +12,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gogf/gf/v2/container/glist"
-	"github.com/gogf/gf/v2/encoding/gurl"
 	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/internal/intlog"
 	"github.com/gogf/gf/v2/internal/json"
-	"github.com/gogf/gf/v2/text/gregex"
 	"github.com/gogf/gf/v2/util/gmeta"
 )
 
@@ -97,69 +94,56 @@ func (s *Server) searchHandlers(method, path, domain string) (parsedItems []*Han
 	}
 	// In case of double '/' URI, for example:
 	// /user//index, //user/index, //user//index//
-	var previousIsSep = false
-	for i := 0; i < len(path); {
-		if path[i] == '/' {
-			if previousIsSep {
-				path = path[:i] + path[i+1:]
-				continue
-			} else {
-				previousIsSep = true
-			}
-		} else {
-			previousIsSep = false
-		}
-		i++
-	}
+	path = normalizeRouterSearchPath(path)
 	// Split the URL.path to separate parts.
-	var array []string
-	if strings.EqualFold("/", path) {
-		array = []string{"/"}
-	} else {
-		array = strings.Split(path[1:], "/")
-	}
 	var (
-		lastMiddlewareElem    *glist.TElement[*HandlerItemParsed]
-		parsedItemList        = glist.NewT[*HandlerItemParsed]()
-		repeatHandlerCheckMap = make(map[int]struct{}, 16)
+		array []string
+		// Most routes are shallow; keep path segments on stack and allocate only for unusually deep paths.
+		arrayBuffer     [16]string
+		middlewareCount = 0
+		// Two slots cover the common default-middleware + serve-handler path without overallocating.
+		parsedItemList = make([]*HandlerItemParsed, 0, 2)
+		seenHandlers   routeSearchSeen
 	)
+	array = splitRouterSearchPath(path, arrayBuffer[:0])
 
 	// The default domain has the most priority when iteration.
 	// Please see doSetHandler if you want to get known about the structure of serveTree.
-	for _, domainItem := range []string{DefaultDomainName, domain} {
+	searchDomainHandlers := func(domainItem string) {
 		p, ok := s.serveTree[domainItem]
 		if !ok {
-			continue
+			return
 		}
-		// Make a list array with a capacity of 16.
-		lists := make([]*glist.List, 0, 16)
+		// Handler lists are collected from root to leaf and consumed in reverse to preserve existing priority rules.
+		var listBuffer [16][]*HandlerItem
+		lists := listBuffer[:0]
 		for i, part := range array {
 			// Add all lists of each node to the list array.
-			if v, ok := p.(map[string]any)["*list"]; ok {
-				lists = append(lists, v.(*glist.List))
+			if len(p.list) > 0 {
+				lists = append(lists, p.list)
 			}
-			if v, ok := p.(map[string]any)[part]; ok {
+			if v := p.children[part]; v != nil {
 				// Loop to the next node by certain key name.
 				p = v
 				if i == len(array)-1 {
-					if v, ok := p.(map[string]any)["*list"]; ok {
-						lists = append(lists, v.(*glist.List))
+					if len(p.list) > 0 {
+						lists = append(lists, p.list)
 						break
 					}
 				}
-			} else if v, ok := p.(map[string]any)["*fuzz"]; ok {
+			} else if p.fuzz != nil {
 				// Loop to the next node by fuzzy node item.
-				p = v
+				p = p.fuzz
 			}
 			if i == len(array)-1 {
 				// It here also checks the fuzzy item,
 				// for rule case like: "/user/*action" matches to "/user".
-				if v, ok := p.(map[string]any)["*fuzz"]; ok {
-					p = v
+				if p.fuzz != nil {
+					p = p.fuzz
 				}
 				// The leaf must have a list item. It adds the list to the list array.
-				if v, ok := p.(map[string]any)["*list"]; ok {
-					lists = append(lists, v.(*glist.List))
+				if len(p.list) > 0 {
+					lists = append(lists, p.list)
 				}
 			}
 		}
@@ -167,12 +151,11 @@ func (s *Server) searchHandlers(method, path, domain string) (parsedItems []*Han
 		// OK, let's loop the result list array, adding the handler item to the result handler result array.
 		// As the tail of the list array has the most priority, it iterates the list array from its tail to head.
 		for i := len(lists) - 1; i >= 0; i-- {
-			for e := lists[i].Front(); e != nil; e = e.Next() {
-				item := e.Value.(*HandlerItem)
+			for _, item := range lists[i] {
 				// Filter repeated handler items, especially the middleware and hook handlers.
 				// It is necessary, do not remove this checks logic unless you really know how it is necessary.
 				//
-				// The `repeatHandlerCheckMap` is used for repeat handler filtering during handler searching.
+				// routeSearchSeen is used for repeat handler filtering during handler searching.
 				// As there are fuzzy nodes, and the fuzzy nodes have both sub-nodes and sub-list nodes, there
 				// may be repeated handler items in both sub-nodes and sub-list nodes. It here uses handler item id to
 				// identify the same handler item that registered.
@@ -182,10 +165,8 @@ func (s *Server) searchHandlers(method, path, domain string) (parsedItems []*Han
 				// different handler items using function doSetHandler, and they have different handler item id.
 				//
 				// Note that twice, the handler function may be registered multiple times as different handler items.
-				if _, isRepeatedHandler := repeatHandlerCheckMap[item.Id]; isRepeatedHandler {
+				if seenHandlers.Has(item.Id) {
 					continue
-				} else {
-					repeatHandlerCheckMap[item.Id] = struct{}{}
 				}
 				// Serving handler can only be added to the handler array just once.
 				// The first route item in the list has the most priority than the rest.
@@ -198,40 +179,28 @@ func (s *Server) searchHandlers(method, path, domain string) (parsedItems []*Han
 				}
 				if item.Router.Method == defaultMethod || item.Router.Method == method {
 					// Note the rule having no fuzzy rules: len(match) == 1
-					if match, err := gregex.MatchString(item.Router.RegRule, path); err == nil && len(match) > 0 {
-						parsedItem := &HandlerItemParsed{item, nil}
-						// If the rule contains fuzzy names,
-						// it needs paring the URL to retrieve the values for the names.
-						if len(item.Router.RegNames) > 0 {
-							if len(match) > len(item.Router.RegNames) {
-								parsedItem.Values = make(map[string]string)
-								// It there repeated names, it just overwrites the same one.
-								for i, name := range item.Router.RegNames {
-									parsedItem.Values[name], _ = gurl.Decode(match[i+1])
-								}
-							}
-						}
+					if matched, values := item.Router.match(path, array); matched {
+						parsedItem := &HandlerItemParsed{item, values}
 						switch item.Type {
 						// The serving handler can be added just once.
 						case HandlerTypeHandler, HandlerTypeObject:
 							hasServe = true
 							serveItem = parsedItem
-							parsedItemList.PushBack(parsedItem)
+							parsedItemList = append(parsedItemList, parsedItem)
 
 						// The middleware is inserted before the serving handler.
 						// If there are multiple middleware, they're inserted into the result list by their registering order.
 						// The middleware is also executed by their registered order.
 						case HandlerTypeMiddleware:
-							if lastMiddlewareElem == nil {
-								lastMiddlewareElem = parsedItemList.PushFront(parsedItem)
-							} else {
-								lastMiddlewareElem = parsedItemList.InsertAfter(lastMiddlewareElem, parsedItem)
-							}
+							parsedItemList = append(parsedItemList, nil)
+							copy(parsedItemList[middlewareCount+1:], parsedItemList[middlewareCount:])
+							parsedItemList[middlewareCount] = parsedItem
+							middlewareCount++
 
 						// HOOK handler, just push it back to the list.
 						case HandlerTypeHook:
 							hasHook = true
-							parsedItemList.PushBack(parsedItem)
+							parsedItemList = append(parsedItemList, parsedItem)
 
 						default:
 							panic(gerror.Newf(`invalid handler type %s`, item.Type))
@@ -241,15 +210,89 @@ func (s *Server) searchHandlers(method, path, domain string) (parsedItems []*Han
 			}
 		}
 	}
-	if parsedItemList.Len() > 0 {
-		var index = 0
-		parsedItems = make([]*HandlerItemParsed, parsedItemList.Len())
-		for e := parsedItemList.Front(); e != nil; e = e.Next() {
-			parsedItems[index] = e.Value
-			index++
-		}
+	searchDomainHandlers(DefaultDomainName)
+	searchDomainHandlers(domain)
+	if len(parsedItemList) > 0 {
+		parsedItems = parsedItemList
 	}
 	return
+}
+
+type routeSearchSeen struct {
+	count int
+	ids   [16]int
+	m     map[int]struct{}
+}
+
+func (s *routeSearchSeen) Has(id int) bool {
+	// The small inline set avoids a map allocation for the common case with only a few candidate handlers.
+	if s.m != nil {
+		if _, ok := s.m[id]; ok {
+			return true
+		}
+		s.m[id] = struct{}{}
+		return false
+	}
+	for i := 0; i < s.count; i++ {
+		if s.ids[i] == id {
+			return true
+		}
+	}
+	if s.count < len(s.ids) {
+		s.ids[s.count] = id
+		s.count++
+		return false
+	}
+	s.m = make(map[int]struct{}, len(s.ids)*2)
+	for i := 0; i < len(s.ids); i++ {
+		s.m[s.ids[i]] = struct{}{}
+	}
+	s.m[id] = struct{}{}
+	return false
+}
+
+func normalizeRouterSearchPath(path string) string {
+	// Fast path: return the original string when there are no duplicate slashes.
+	var previousIsSep bool
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' {
+			if previousIsSep {
+				buffer := make([]byte, 0, len(path))
+				buffer = append(buffer, path[:i]...)
+				for ; i < len(path); i++ {
+					if path[i] == '/' {
+						if previousIsSep {
+							continue
+						}
+						previousIsSep = true
+					} else {
+						previousIsSep = false
+					}
+					buffer = append(buffer, path[i])
+				}
+				return string(buffer)
+			}
+			previousIsSep = true
+		} else {
+			previousIsSep = false
+		}
+	}
+	return path
+}
+
+func splitRouterSearchPath(path string, array []string) []string {
+	// Split without strings.Split so callers can pass a stack-backed buffer.
+	if path == "/" {
+		return append(array, "/")
+	}
+	start := 1
+	for i := 1; i <= len(path); i++ {
+		if i == len(path) || path[i] == '/' {
+			array = append(array, path[start:i])
+			start = i + 1
+		}
+	}
+	return array
 }
 
 // MarshalJSON implements the interface MarshalJSON for json.Marshal.
