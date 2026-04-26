@@ -30,6 +30,9 @@ type Converter struct {
 	// anyToTypeConvertMap for custom type converting from any to its reflect.Value.
 	anyToTypeConvertMap map[reflect.Type]AnyConvertFunc
 
+	// customAnyConvertFuncMarkMap marks user registered any converters.
+	customAnyConvertFuncMarkMap map[reflect.Type]struct{}
+
 	// interfaceToTypeConvertMap used for converting any interface type
 	// the reason why map is not used here, is because interface types cannot be instantiated
 	interfaceToTypeConvertMap []interfaceTypeConverter
@@ -45,9 +48,10 @@ type AnyConvertFunc func(from any, to reflect.Value) error
 // NewConverter creates and returns a new Converter object.
 func NewConverter() *Converter {
 	return &Converter{
-		cachedStructsInfoMap:     sync.Map{},
-		typeConverterFuncMarkMap: make(map[reflect.Type]struct{}),
-		anyToTypeConvertMap:      make(map[reflect.Type]AnyConvertFunc),
+		cachedStructsInfoMap:        sync.Map{},
+		typeConverterFuncMarkMap:    make(map[reflect.Type]struct{}),
+		customAnyConvertFuncMarkMap: make(map[reflect.Type]struct{}),
+		anyToTypeConvertMap:         make(map[reflect.Type]AnyConvertFunc),
 	}
 }
 
@@ -82,6 +86,18 @@ func (cf *Converter) RegisterAnyConvertFunc(dstType reflect.Type, convertFunc An
 	)
 }
 
+// RegisterCustomAnyConvertFunc registers a user-defined any converter function for specified type.
+func (cf *Converter) RegisterCustomAnyConvertFunc(dstType reflect.Type, convertFunc AnyConvertFunc) {
+	if dstType == nil || convertFunc == nil {
+		return
+	}
+	cf.RegisterAnyConvertFunc(dstType, convertFunc)
+	for dstType.Kind() == reflect.Pointer {
+		dstType = dstType.Elem()
+	}
+	cf.customAnyConvertFuncMarkMap[dstType] = struct{}{}
+}
+
 // GetAnyConvertFuncByType retrieves and returns the converting function for specified type.
 func (cf *Converter) GetAnyConvertFuncByType(dstType reflect.Type) AnyConvertFunc {
 	if dstType.Kind() == reflect.Pointer {
@@ -93,6 +109,14 @@ func (cf *Converter) GetAnyConvertFuncByType(dstType reflect.Type) AnyConvertFun
 // IsAnyConvertFuncEmpty checks whether there's any converting function registered.
 func (cf *Converter) IsAnyConvertFuncEmpty() bool {
 	return len(cf.anyToTypeConvertMap) == 0
+}
+
+func (cf *Converter) HasCustomAnyConvertFunc(dstType reflect.Type) bool {
+	for dstType.Kind() == reflect.Pointer {
+		dstType = dstType.Elem()
+	}
+	_, ok := cf.customAnyConvertFuncMarkMap[dstType]
+	return ok
 }
 
 func (cf *Converter) checkTypeImplInterface(t reflect.Type) AnyConvertFunc {

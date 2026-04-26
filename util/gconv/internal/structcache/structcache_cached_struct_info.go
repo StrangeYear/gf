@@ -110,18 +110,26 @@ func (csi *CachedStructInfo) makeCachedFieldInfo(
 	field reflect.StructField, fieldIndexes []int, priorityTags []string,
 ) *CachedFieldInfo {
 	base := &CachedFieldInfoBase{
-		IsCommonInterface:       checkTypeIsCommonInterface(field),
-		StructField:             field,
-		FieldIndexes:            fieldIndexes,
-		ConvertFunc:             csi.genFieldConvertFunc(field.Type),
-		HasCustomConvert:        csi.checkTypeHasCustomConvert(field.Type),
-		PriorityTagAndFieldName: csi.genPriorityTagAndFieldName(field, priorityTags),
-		RemoveSymbolsFieldName:  utils.RemoveSymbols(field.Name),
+		IsCommonInterface:          checkTypeIsCommonInterface(field),
+		StructField:                field,
+		FieldIndexes:               fieldIndexes,
+		ConvertFunc:                csi.genFieldConvertFunc(field.Type),
+		HasCustomConvert:           csi.checkTypeHasCustomConvert(field.Type),
+		HasCustomAnyConvert:        csi.converter.HasCustomAnyConvertFunc(field.Type),
+		IsDirectlyAssignable:       checkTypeIsDirectlyAssignable(field.Type),
+		UnsafeOffset:               field.Offset,
+		IsUnsafeDirectlyAssignable: checkTypeIsUnsafeDirectlyAssignable(field.Type, fieldIndexes),
+		PriorityTagAndFieldName:    csi.genPriorityTagAndFieldName(field, priorityTags),
+		RemoveSymbolsFieldName:     utils.RemoveSymbols(field.Name),
 	}
 	base.LastFuzzyKey.Store(field.Name)
 	return &CachedFieldInfo{
 		CachedFieldInfoBase: base,
 	}
+}
+
+func checkTypeIsUnsafeDirectlyAssignable(fieldType reflect.Type, fieldIndexes []int) bool {
+	return len(fieldIndexes) == 1 && checkTypeIsDirectlyAssignable(fieldType)
 }
 
 func (csi *CachedStructInfo) genFieldConvertFunc(fieldType reflect.Type) (convertFunc AnyConvertFunc) {
@@ -187,4 +195,29 @@ func (csi *CachedStructInfo) checkTypeHasCustomConvert(fieldType reflect.Type) b
 	}
 	_, ok := csi.converter.typeConverterFuncMarkMap[fieldType]
 	return ok
+}
+
+func checkTypeIsDirectlyAssignable(fieldType reflect.Type) bool {
+	if fieldType.PkgPath() != "" {
+		return false
+	}
+	switch fieldType.Kind() {
+	case reflect.String,
+		reflect.Bool,
+		reflect.Int,
+		reflect.Int8,
+		reflect.Int16,
+		reflect.Int32,
+		reflect.Int64,
+		reflect.Uint,
+		reflect.Uint8,
+		reflect.Uint16,
+		reflect.Uint32,
+		reflect.Uint64,
+		reflect.Float32,
+		reflect.Float64:
+		return true
+	default:
+		return false
+	}
 }

@@ -55,6 +55,9 @@ type CachedFieldInfoBase struct {
 	// to another type.
 	HasCustomConvert bool
 
+	// HasCustomAnyConvert marks there is a user-defined any converter for this field type.
+	HasCustomAnyConvert bool
+
 	// StructField is the type info of this field.
 	StructField reflect.StructField
 
@@ -77,6 +80,16 @@ type CachedFieldInfoBase struct {
 
 	// ConvertFunc is the converting function for this field.
 	ConvertFunc AnyConvertFunc
+
+	// IsDirectlyAssignable marks whether this field can use direct assignment
+	// for same-typed builtin scalar values.
+	IsDirectlyAssignable bool
+
+	// UnsafeOffset is the field offset used for unsafe direct assignment.
+	UnsafeOffset uintptr
+
+	// IsUnsafeDirectlyAssignable marks whether this field can use unsafe direct assignment.
+	IsUnsafeDirectlyAssignable bool
 
 	// The last fuzzy matching key for this field.
 	// The fuzzy matching occurs only if there are no direct tag and field name matching in the params map.

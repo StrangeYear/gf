@@ -129,6 +129,12 @@ func (c *Converter) RegisterTypeConverterFunc(f any) (err error) {
 // RegisterAnyConverterFunc registers custom type converting function for specified types.
 func (c *Converter) RegisterAnyConverterFunc(convertFunc AnyConvertFunc, types ...reflect.Type) {
 	for _, t := range types {
+		c.internalConverter.RegisterCustomAnyConvertFunc(t, convertFunc)
+	}
+}
+
+func (c *Converter) registerBuiltInAnyConverterFunc(convertFunc AnyConvertFunc, types ...reflect.Type) {
+	for _, t := range types {
 		c.internalConverter.RegisterAnyConvertFunc(t, convertFunc)
 	}
 }
@@ -153,28 +159,28 @@ func (c *Converter) registerBuiltInAnyConvertFunc() {
 		timeType    = reflect.TypeOf((*time.Time)(nil)).Elem()
 		gtimeType   = reflect.TypeOf((*gtime.Time)(nil)).Elem()
 	)
-	c.RegisterAnyConverterFunc(
+	c.registerBuiltInAnyConverterFunc(
 		c.builtInAnyConvertFuncForInt64, intType, int8Type, int16Type, int32Type, int64Type,
 	)
-	c.RegisterAnyConverterFunc(
+	c.registerBuiltInAnyConverterFunc(
 		c.builtInAnyConvertFuncForUint64, uintType, uint8Type, uint16Type, uint32Type, uint64Type,
 	)
-	c.RegisterAnyConverterFunc(
+	c.registerBuiltInAnyConverterFunc(
 		c.builtInAnyConvertFuncForString, stringType,
 	)
-	c.RegisterAnyConverterFunc(
+	c.registerBuiltInAnyConverterFunc(
 		c.builtInAnyConvertFuncForFloat64, float32Type, float64Type,
 	)
-	c.RegisterAnyConverterFunc(
+	c.registerBuiltInAnyConverterFunc(
 		c.builtInAnyConvertFuncForBool, boolType,
 	)
-	c.RegisterAnyConverterFunc(
+	c.registerBuiltInAnyConverterFunc(
 		c.builtInAnyConvertFuncForBytes, bytesType,
 	)
-	c.RegisterAnyConverterFunc(
+	c.registerBuiltInAnyConverterFunc(
 		c.builtInAnyConvertFuncForTime, timeType,
 	)
-	c.RegisterAnyConverterFunc(
+	c.registerBuiltInAnyConverterFunc(
 		c.builtInAnyConvertFuncForGTime, gtimeType,
 	)
 }

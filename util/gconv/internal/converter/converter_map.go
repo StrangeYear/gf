@@ -115,7 +115,7 @@ func (c *Converter) doMapConvert(
 		newTags = append(option.Tags, gtag.StructTagPriority...)
 	}
 	// Assert the common combination of types, and finally it uses reflection.
-	dataMap := make(map[string]any)
+	var dataMap map[string]any
 	switch r := value.(type) {
 	case string:
 		// If it is a JSON string, automatically unmarshal it!
@@ -136,6 +136,7 @@ func (c *Converter) doMapConvert(
 			return nil, nil
 		}
 	case map[any]any:
+		dataMap = make(map[string]any)
 		recursiveOption := option
 		recursiveOption.Tags = newTags
 		for k, v := range r {
@@ -157,6 +158,7 @@ func (c *Converter) doMapConvert(
 			}
 		}
 	case map[any]string:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			s, err := c.String(k)
 			if err != nil && !option.ContinueOnError {
@@ -165,6 +167,7 @@ func (c *Converter) doMapConvert(
 			dataMap[s] = v
 		}
 	case map[any]int:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			s, err := c.String(k)
 			if err != nil && !option.ContinueOnError {
@@ -173,6 +176,7 @@ func (c *Converter) doMapConvert(
 			dataMap[s] = v
 		}
 	case map[any]uint:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			s, err := c.String(k)
 			if err != nil && !option.ContinueOnError {
@@ -181,6 +185,7 @@ func (c *Converter) doMapConvert(
 			dataMap[s] = v
 		}
 	case map[any]float32:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			s, err := c.String(k)
 			if err != nil && !option.ContinueOnError {
@@ -189,6 +194,7 @@ func (c *Converter) doMapConvert(
 			dataMap[s] = v
 		}
 	case map[any]float64:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			s, err := c.String(k)
 			if err != nil && !option.ContinueOnError {
@@ -197,31 +203,38 @@ func (c *Converter) doMapConvert(
 			dataMap[s] = v
 		}
 	case map[string]bool:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			dataMap[k] = v
 		}
 	case map[string]int:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			dataMap[k] = v
 		}
 	case map[string]uint:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			dataMap[k] = v
 		}
 	case map[string]float32:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			dataMap[k] = v
 		}
 	case map[string]float64:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			dataMap[k] = v
 		}
 	case map[string]string:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			dataMap[k] = v
 		}
 	case map[string]any:
 		if recursive == RecursiveTypeTrue {
+			dataMap = make(map[string]any, len(r))
 			recursiveOption := option
 			recursiveOption.Tags = newTags
 			// A copy of current map.
@@ -244,6 +257,7 @@ func (c *Converter) doMapConvert(
 			return r, nil
 		}
 	case map[int]any:
+		dataMap = make(map[string]any)
 		recursiveOption := option
 		recursiveOption.Tags = newTags
 		for k, v := range r {
@@ -265,6 +279,7 @@ func (c *Converter) doMapConvert(
 			}
 		}
 	case map[int]string:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			s, err := c.String(k)
 			if err != nil && !option.ContinueOnError {
@@ -273,6 +288,7 @@ func (c *Converter) doMapConvert(
 			dataMap[s] = v
 		}
 	case map[uint]string:
+		dataMap = make(map[string]any)
 		for k, v := range r {
 			s, err := c.String(k)
 			if err != nil && !option.ContinueOnError {
@@ -302,6 +318,7 @@ func (c *Converter) doMapConvert(
 		// []string{"k1","v1","k2"}      => map[string]any{"k1":"v1", "k2":nil}
 		case reflect.Slice, reflect.Array:
 			length := reflectValue.Len()
+			dataMap = make(map[string]any, (length+1)/2)
 			for i := 0; i < length; i += 2 {
 				s, err := c.String(reflectValue.Index(i).Interface())
 				if err != nil && !option.ContinueOnError {
@@ -379,7 +396,7 @@ func (c *Converter) doMapConvertForMapOrStructValue(in doMapConvertForMapOrStruc
 	case reflect.Map:
 		var (
 			mapIter = reflectValue.MapRange()
-			dataMap = make(map[string]any)
+			dataMap = make(map[string]any, reflectValue.Len())
 		)
 		for mapIter.Next() {
 			var (
@@ -419,11 +436,12 @@ func (c *Converter) doMapConvertForMapOrStructValue(in doMapConvertForMapOrStruc
 		return dataMap, nil
 
 	case reflect.Struct:
-		var dataMap = make(map[string]any)
 		// Map converting interface check.
 		if v, ok := in.Value.(localinterface.IMapStrAny); ok {
+			m := v.MapStrAny()
+			dataMap := make(map[string]any, len(m))
 			// Value copy, in case of concurrent safety.
-			for mapK, mapV := range v.MapStrAny() {
+			for mapK, mapV := range m {
 				if in.RecursiveOption {
 					dataMap[mapK], err = c.doMapConvertForMapOrStructValue(
 						doMapConvertForMapOrStructValueInput{
@@ -445,6 +463,7 @@ func (c *Converter) doMapConvertForMapOrStructValue(in doMapConvertForMapOrStruc
 				return dataMap, nil
 			}
 		}
+		dataMap := make(map[string]any, reflectValue.NumField())
 		// Using reflect for converting.
 		var (
 			rtField     reflect.StructField
@@ -595,7 +614,7 @@ func (c *Converter) doMapConvertForMapOrStructValue(in doMapConvertForMapOrStruc
 				case reflect.Map:
 					var (
 						mapIter   = rvAttrField.MapRange()
-						nestedMap = make(map[string]any)
+						nestedMap = make(map[string]any, rvAttrField.Len())
 					)
 					for mapIter.Next() {
 						s, err := c.String(mapIter.Key().Interface())

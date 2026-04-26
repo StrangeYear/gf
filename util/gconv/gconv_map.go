@@ -13,6 +13,11 @@ package gconv
 // priorityTagAndFieldName that will be detected, otherwise it detects the priorityTagAndFieldName in order of:
 // gconv, json, field name.
 func Map(value any, option ...MapOption) map[string]any {
+	if len(option) == 0 {
+		if result, ok := value.(map[string]any); ok {
+			return result
+		}
+	}
 	result, _ := defaultConverter.Map(value, getUsedMapOption(option...))
 	return result
 }

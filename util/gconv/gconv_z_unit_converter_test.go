@@ -123,6 +123,21 @@ func TestNewConverter(t *testing.T) {
 	})
 	gtest.C(t, func(t *gtest.T) {
 		conv := gconv.NewConverter()
+		conv.RegisterAnyConverterFunc(func(_ any, to reflect.Value) error {
+			to.SetInt(123456)
+			return nil
+		}, reflect.TypeOf(0))
+		var dst Dst[int]
+		err := conv.Struct(map[string]any{
+			"a": 1200,
+		}, &dst, gconv.StructOption{})
+		t.AssertNil(err)
+		t.Assert(dst, Dst[int]{
+			A: 123456,
+		})
+	})
+	gtest.C(t, func(t *gtest.T) {
+		conv := gconv.NewConverter()
 		conv.RegisterAnyConverterFunc(testAnyToMyInt, reflect.TypeOf((myInt)(0)))
 		var dst Dst[*myInt]
 		err := conv.Struct(map[string]any{

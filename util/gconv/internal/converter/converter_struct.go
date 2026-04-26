@@ -9,6 +9,7 @@ package converter
 import (
 	"reflect"
 	"strings"
+	"unsafe"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -40,6 +41,8 @@ type StructOption struct {
 	// preserving the existing value in the destination field.
 	OmitNil bool
 }
+
+const structUsedKeyFastPathMax = 32
 
 func (c *Converter) getStructOption(option ...StructOption) StructOption {
 	if len(option) > 0 {
@@ -193,6 +196,11 @@ func (c *Converter) Struct(params, pointer any, option ...StructOption) (err err
 	if cachedStructInfo.HasNoFields() {
 		return nil
 	}
+	if len(paramsMap) <= structUsedKeyFastPathMax && len(structOption.ParamKeyToAttrMap) == 0 {
+		return c.bindStructWithLoopFieldInfosByUsedKeys(
+			paramsMap, pointerElemReflectValue, cachedStructInfo, structOption,
+		)
+	}
 	var (
 		// Indicates that those values have been used and cannot be reused.
 		usedParamsKeyOrTagNameMap = structcache.GetUsedParamsKeyOrTagNameMapFromPool()
@@ -266,20 +274,19 @@ func (c *Converter) bindStructWithLoopFieldInfos(
 	var (
 		cachedFieldInfo *structcache.CachedFieldInfo
 		fuzzLastKey     string
-		fieldValue      reflect.Value
 		paramKey        string
 		paramValue      any
 		matched         bool
 		ok              bool
+		structPointer   = structUnsafePointer(structValue)
 	)
 	for _, cachedFieldInfo = range cachedStructInfo.GetFieldConvertInfos() {
 		for _, fieldTag := range cachedFieldInfo.PriorityTagAndFieldName {
 			if paramValue, ok = paramsMap[fieldTag]; !ok {
 				continue
 			}
-			fieldValue = cachedFieldInfo.GetFieldReflectValueFrom(structValue)
-			if err = c.bindVarToStructField(
-				cachedFieldInfo, fieldValue, paramValue, option,
+			if err = c.bindVarToStructFieldFast(
+				cachedFieldInfo, structValue, structPointer, paramValue, option,
 			); err != nil && !option.ContinueOnError {
 				return err
 			}
@@ -301,7 +308,9 @@ func (c *Converter) bindStructWithLoopFieldInfos(
 		}
 
 		fuzzLastKey = cachedFieldInfo.LastFuzzyKey.Load().(string)
-		if paramValue, ok = paramsMap[fuzzLastKey]; !ok {
+		if paramValue, ok = paramsMap[fuzzLastKey]; ok {
+			paramKey = fuzzLastKey
+		} else {
 			paramKey, paramValue = fuzzyMatchingFieldName(
 				cachedFieldInfo.RemoveSymbolsFieldName, paramsMap, usedParamsKeyOrTagNameMap,
 			)
@@ -309,10 +318,9 @@ func (c *Converter) bindStructWithLoopFieldInfos(
 			cachedFieldInfo.LastFuzzyKey.Store(paramKey)
 		}
 		if ok {
-			fieldValue = cachedFieldInfo.GetFieldReflectValueFrom(structValue)
 			if paramValue != nil {
-				if err = c.bindVarToStructField(
-					cachedFieldInfo, fieldValue, paramValue, option,
+				if err = c.bindVarToStructFieldFast(
+					cachedFieldInfo, structValue, structPointer, paramValue, option,
 				); err != nil && !option.ContinueOnError {
 					return err
 				}
@@ -327,6 +335,125 @@ func (c *Converter) bindStructWithLoopFieldInfos(
 			}
 			usedParamsKeyOrTagNameMap[paramKey] = struct{}{}
 		}
+	}
+	return nil
+}
+
+func (c *Converter) bindStructWithLoopFieldInfosByUsedKeys(
+	paramsMap map[string]any,
+	structValue reflect.Value,
+	cachedStructInfo *structcache.CachedStructInfo,
+	option StructOption,
+) (err error) {
+	var (
+		usedKeys        [structUsedKeyFastPathMax]string
+		usedKeyCount    int
+		cachedFieldInfo *structcache.CachedFieldInfo
+		fuzzLastKey     string
+		paramKey        string
+		paramValue      any
+		matched         bool
+		ok              bool
+		structPointer   = structUnsafePointer(structValue)
+	)
+	for _, cachedFieldInfo = range cachedStructInfo.GetFieldConvertInfos() {
+		for _, fieldTag := range cachedFieldInfo.PriorityTagAndFieldName {
+			if paramValue, ok = paramsMap[fieldTag]; !ok {
+				continue
+			}
+			if err = c.bindVarToStructFieldFast(
+				cachedFieldInfo, structValue, structPointer, paramValue, option,
+			); err != nil && !option.ContinueOnError {
+				return err
+			}
+			// handle same field name in nested struct.
+			if len(cachedFieldInfo.OtherSameNameField) > 0 {
+				if err = c.setOtherSameNameField(
+					cachedFieldInfo, paramValue, structValue, option,
+				); err != nil && !option.ContinueOnError {
+					return err
+				}
+			}
+			usedKeyCount = addStructUsedKey(usedKeys[:], usedKeyCount, fieldTag)
+			matched = true
+			break
+		}
+		if matched {
+			matched = false
+			continue
+		}
+
+		fuzzLastKey = cachedFieldInfo.LastFuzzyKey.Load().(string)
+		if paramValue, ok = paramsMap[fuzzLastKey]; ok {
+			paramKey = fuzzLastKey
+		} else {
+			paramKey, paramValue = fuzzyMatchingFieldNameByUsedKeys(
+				cachedFieldInfo.RemoveSymbolsFieldName, paramsMap, usedKeys[:usedKeyCount],
+			)
+			ok = paramKey != ""
+			cachedFieldInfo.LastFuzzyKey.Store(paramKey)
+		}
+		if ok {
+			if paramValue != nil {
+				if err = c.bindVarToStructFieldFast(
+					cachedFieldInfo, structValue, structPointer, paramValue, option,
+				); err != nil && !option.ContinueOnError {
+					return err
+				}
+				// handle same field name in nested struct.
+				if len(cachedFieldInfo.OtherSameNameField) > 0 {
+					if err = c.setOtherSameNameField(
+						cachedFieldInfo, paramValue, structValue, option,
+					); err != nil && !option.ContinueOnError {
+						return err
+					}
+				}
+			}
+			usedKeyCount = addStructUsedKey(usedKeys[:], usedKeyCount, paramKey)
+		}
+	}
+	return nil
+}
+
+func addStructUsedKey(usedKeys []string, usedKeyCount int, key string) int {
+	for i := 0; i < usedKeyCount; i++ {
+		if usedKeys[i] == key {
+			return usedKeyCount
+		}
+	}
+	usedKeys[usedKeyCount] = key
+	return usedKeyCount + 1
+}
+
+func fuzzyMatchingFieldNameByUsedKeys(
+	fieldName string,
+	paramsMap map[string]any,
+	usedKeys []string,
+) (string, any) {
+	for paramKey, paramValue := range paramsMap {
+		if isStructUsedKey(usedKeys, paramKey) {
+			continue
+		}
+		removeParamKeyUnderline := utils.RemoveSymbols(paramKey)
+		if strings.EqualFold(fieldName, removeParamKeyUnderline) {
+			return paramKey, paramValue
+		}
+	}
+	return "", nil
+}
+
+func isStructUsedKey(usedKeys []string, key string) bool {
+	for _, usedKey := range usedKeys {
+		if usedKey == key {
+			return true
+		}
+	}
+	return false
+}
+
+func structUnsafePointer(structValue reflect.Value) unsafe.Pointer {
+	if structValue.IsValid() && structValue.CanAddr() && structValue.CanSet() {
+		return unsafe.Pointer(structValue.UnsafeAddr())
 	}
 	return nil
 }
@@ -348,6 +475,27 @@ func fuzzyMatchingFieldName(
 		}
 	}
 	return "", nil
+}
+
+func (c *Converter) bindVarToStructFieldFast(
+	cachedFieldInfo *structcache.CachedFieldInfo,
+	structValue reflect.Value,
+	structPointer unsafe.Pointer,
+	srcValue any,
+	option StructOption,
+) error {
+	if structPointer != nil &&
+		!option.OmitNil &&
+		!option.OmitEmpty &&
+		!cachedFieldInfo.HasCustomConvert &&
+		!cachedFieldInfo.HasCustomAnyConvert &&
+		!cachedFieldInfo.IsCommonInterface &&
+		cachedFieldInfo.IsUnsafeDirectlyAssignable &&
+		bindVarToStructFieldUnsafe(cachedFieldInfo, structPointer, srcValue) {
+		return nil
+	}
+	fieldValue := cachedFieldInfo.GetFieldReflectValueFrom(structValue)
+	return c.bindVarToStructField(cachedFieldInfo, fieldValue, srcValue, option)
 }
 
 // bindVarToStructField sets value to struct object attribute by name.
@@ -372,6 +520,15 @@ func (c *Converter) bindVarToStructField(
 			}
 		}
 	}()
+	if !option.OmitNil &&
+		!option.OmitEmpty &&
+		!cachedFieldInfo.HasCustomConvert &&
+		!cachedFieldInfo.HasCustomAnyConvert &&
+		!cachedFieldInfo.IsCommonInterface &&
+		cachedFieldInfo.IsDirectlyAssignable &&
+		bindVarToStructFieldDirect(fieldValue, srcValue) {
+		return nil
+	}
 	// Check if the value should be omitted based on OmitEmpty or OmitNil options
 	if option.OmitNil && empty.IsNil(srcValue) {
 		return nil
@@ -421,6 +578,189 @@ func (c *Converter) bindVarToStructField(
 		convertOption,
 	)
 	return err
+}
+
+func bindVarToStructFieldDirect(fieldValue reflect.Value, srcValue any) bool {
+	switch fieldValue.Kind() {
+	case reflect.String:
+		if v, ok := srcValue.(string); ok {
+			fieldValue.SetString(v)
+			return true
+		}
+
+	case reflect.Bool:
+		if v, ok := srcValue.(bool); ok {
+			fieldValue.SetBool(v)
+			return true
+		}
+
+	case reflect.Int:
+		if v, ok := srcValue.(int); ok {
+			fieldValue.SetInt(int64(v))
+			return true
+		}
+
+	case reflect.Int8:
+		if v, ok := srcValue.(int8); ok {
+			fieldValue.SetInt(int64(v))
+			return true
+		}
+
+	case reflect.Int16:
+		if v, ok := srcValue.(int16); ok {
+			fieldValue.SetInt(int64(v))
+			return true
+		}
+
+	case reflect.Int32:
+		if v, ok := srcValue.(int32); ok {
+			fieldValue.SetInt(int64(v))
+			return true
+		}
+
+	case reflect.Int64:
+		if v, ok := srcValue.(int64); ok {
+			fieldValue.SetInt(v)
+			return true
+		}
+
+	case reflect.Uint:
+		if v, ok := srcValue.(uint); ok {
+			fieldValue.SetUint(uint64(v))
+			return true
+		}
+
+	case reflect.Uint8:
+		if v, ok := srcValue.(uint8); ok {
+			fieldValue.SetUint(uint64(v))
+			return true
+		}
+
+	case reflect.Uint16:
+		if v, ok := srcValue.(uint16); ok {
+			fieldValue.SetUint(uint64(v))
+			return true
+		}
+
+	case reflect.Uint32:
+		if v, ok := srcValue.(uint32); ok {
+			fieldValue.SetUint(uint64(v))
+			return true
+		}
+
+	case reflect.Uint64:
+		if v, ok := srcValue.(uint64); ok {
+			fieldValue.SetUint(v)
+			return true
+		}
+
+	case reflect.Float32:
+		if v, ok := srcValue.(float32); ok {
+			fieldValue.SetFloat(float64(v))
+			return true
+		}
+
+	case reflect.Float64:
+		if v, ok := srcValue.(float64); ok {
+			fieldValue.SetFloat(v)
+			return true
+		}
+	}
+	return false
+}
+
+func bindVarToStructFieldUnsafe(
+	cachedFieldInfo *structcache.CachedFieldInfo,
+	structPointer unsafe.Pointer,
+	srcValue any,
+) bool {
+	fieldPointer := unsafe.Add(structPointer, cachedFieldInfo.UnsafeOffset)
+	switch cachedFieldInfo.StructField.Type.Kind() {
+	case reflect.String:
+		if v, ok := srcValue.(string); ok {
+			*(*string)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Bool:
+		if v, ok := srcValue.(bool); ok {
+			*(*bool)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Int:
+		if v, ok := srcValue.(int); ok {
+			*(*int)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Int8:
+		if v, ok := srcValue.(int8); ok {
+			*(*int8)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Int16:
+		if v, ok := srcValue.(int16); ok {
+			*(*int16)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Int32:
+		if v, ok := srcValue.(int32); ok {
+			*(*int32)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Int64:
+		if v, ok := srcValue.(int64); ok {
+			*(*int64)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Uint:
+		if v, ok := srcValue.(uint); ok {
+			*(*uint)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Uint8:
+		if v, ok := srcValue.(uint8); ok {
+			*(*uint8)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Uint16:
+		if v, ok := srcValue.(uint16); ok {
+			*(*uint16)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Uint32:
+		if v, ok := srcValue.(uint32); ok {
+			*(*uint32)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Uint64:
+		if v, ok := srcValue.(uint64); ok {
+			*(*uint64)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Float32:
+		if v, ok := srcValue.(float32); ok {
+			*(*float32)(fieldPointer) = v
+			return true
+		}
+
+	case reflect.Float64:
+		if v, ok := srcValue.(float64); ok {
+			*(*float64)(fieldPointer) = v
+			return true
+		}
+	}
+	return false
 }
 
 // bindVarToReflectValueWithInterfaceCheck does bind using common interfaces checks.
