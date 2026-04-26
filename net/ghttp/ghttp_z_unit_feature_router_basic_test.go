@@ -143,6 +143,28 @@ func Test_Router_Method(t *testing.T) {
 	})
 }
 
+func Test_Router_MethodPriority(t *testing.T) {
+	s := g.Server(guid.S())
+	s.BindHandler("GET:/method-priority", func(r *ghttp.Request) {
+		r.Response.Write("get")
+	})
+	s.BindHandler("/method-priority", func(r *ghttp.Request) {
+		r.Response.Write("all")
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(client.GetContent(ctx, "/method-priority"), "get")
+		t.Assert(client.PostContent(ctx, "/method-priority"), "all")
+	})
+}
+
 // Extra char '/' of the router.
 func Test_Router_ExtraChar(t *testing.T) {
 	s := g.Server(guid.S())

@@ -53,16 +53,34 @@ type routeFastNode struct {
 	catchAll             *routeFastNode
 	catchAllName         string
 	catchAllNameConflict bool
+	// patterns stores segment-level pattern branches like "{id}.json" or "file-{id}.json".
+	patterns []routeFastPatternChild
 	// list keeps simple REST handlers in the same priority order as the compatibility tree.
 	list []*HandlerItem
 	// fallback keeps complex rules out of the hot tree while preserving matcher compatibility on overlap.
-	fallback []*HandlerItem
+	fallback            []*HandlerItem
+	fallbackByFirstPart map[string][]*HandlerItem
+}
+
+type routeFastPatternChild struct {
+	key           string
+	segment       routeSegmentMatcher
+	node          *routeFastNode
+	literalLength int
+	firstStatic   string
+	lastStatic    string
 }
 
 type routeFastCandidate struct {
-	list           []*HandlerItem
-	values         map[string]string
-	valuesReliable bool
+	list                  []*HandlerItem
+	values                map[string]string
+	valuesReliable        bool
+	requiresPriorityMerge bool
+}
+
+type fastRoutePlan struct {
+	segments   []routeSegmentMatcher
+	hasPattern bool
 }
 
 // routerMapKey creates and returns a unique router key for given parameters.
@@ -215,6 +233,9 @@ func (s *Server) doSetHandler(
 			}
 		}
 	}
+	if s.isRepeatedWholeNamedRoute(handler, method, uri, domain) {
+		return
+	}
 	// Unique id for each handler.
 	handler.Id = handlerIdGenerator.Add(1)
 	// Create a new router by given parameter.
@@ -308,6 +329,63 @@ func (s *Server) doSetHandler(
 	s.clearServeCache(ctx)
 }
 
+func (s *Server) isRepeatedWholeNamedRoute(handler *HandlerItem, method, uri, domain string) bool {
+	switch handler.Type {
+	case HandlerTypeHandler, HandlerTypeObject:
+	default:
+		return false
+	}
+	canonicalUri, hasWholeNamed := canonicalWholeNamedRoutePath(uri)
+	method = strings.ToUpper(method)
+	for _, items := range s.routesMap {
+		for _, item := range items {
+			switch item.Type {
+			case HandlerTypeHandler, HandlerTypeObject:
+			default:
+				continue
+			}
+			if item.HookName != handler.HookName ||
+				item.Router == nil ||
+				item.Router.Domain != domain ||
+				item.Router.Method != method ||
+				item.Router.Uri == uri {
+				continue
+			}
+			itemCanonicalUri, itemHasWholeNamed := canonicalWholeNamedRoutePath(item.Router.Uri)
+			if (hasWholeNamed || itemHasWholeNamed) && itemCanonicalUri == canonicalUri {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func canonicalWholeNamedRoutePath(uri string) (canonical string, hasWholeNamed bool) {
+	if uri == "/" {
+		return uri, false
+	}
+	parts := strings.Split(uri[1:], "/")
+	var builder strings.Builder
+	builder.Grow(len(uri))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		builder.WriteByte('/')
+		if name, ok := parseRouteParamSegment(part); ok {
+			builder.WriteByte(':')
+			builder.WriteString(name)
+			hasWholeNamed = true
+			continue
+		}
+		builder.WriteString(part)
+	}
+	if builder.Len() == 0 {
+		return "/", hasWholeNamed
+	}
+	return builder.String(), hasWholeNamed
+}
+
 func (s *Server) setFastHandler(domain, uri string, handler *HandlerItem) {
 	if s.serveFastTree == nil {
 		s.serveFastTree = make(map[string]*routeFastNode)
@@ -317,12 +395,46 @@ func (s *Server) setFastHandler(domain, uri string, handler *HandlerItem) {
 		root = &routeFastNode{}
 		s.serveFastTree[domain] = root
 	}
-	fastPath, ok := compileFastRoutePath(uri)
+	plan, ok := compileFastRoutePlan(uri)
 	if !ok {
-		root.fallback = insertHandlerItemByPriority(root.fallback, handler, s.compareRouterPriority)
+		root.insertFastFallback(uri, handler, s.compareRouterPriority)
 		return
 	}
-	root.insertFastPath(fastPath, handler, s.compareRouterPriority)
+	root.insertFastPlan(plan, handler, s.compareRouterPriority)
+}
+
+func (n *routeFastNode) insertFastFallback(
+	uri string, handler *HandlerItem, compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) {
+	firstPart := fallbackFirstStaticPart(uri)
+	if firstPart == "" {
+		n.fallback = insertHandlerItemByPriority(n.fallback, handler, compare)
+		return
+	}
+	if n.fallbackByFirstPart == nil {
+		n.fallbackByFirstPart = make(map[string][]*HandlerItem)
+	}
+	n.fallbackByFirstPart[firstPart] = insertHandlerItemByPriority(
+		n.fallbackByFirstPart[firstPart], handler, compare,
+	)
+}
+
+func fallbackFirstStaticPart(uri string) string {
+	if len(uri) == 0 || uri[0] != '/' || uri == "/" {
+		return ""
+	}
+	part := uri[1:]
+	if index := strings.IndexByte(part, '/'); index >= 0 {
+		part = part[:index]
+	}
+	if part == "" {
+		return ""
+	}
+	segment, ok := compileRouteSegmentMatcher(part)
+	if !ok || segment.kind != routeSegmentMatcherKindStatic {
+		return ""
+	}
+	return segment.value
 }
 
 func compileFastRoutePath(uri string) (string, bool) {
@@ -380,6 +492,158 @@ func compileFastRouteSegments(uri string) ([]routeSegmentMatcher, bool) {
 		segments = append(segments, segment)
 	}
 	return segments, true
+}
+
+func compileFastRoutePlan(uri string) (fastRoutePlan, bool) {
+	if uri == "/" {
+		return fastRoutePlan{}, true
+	}
+	parts := strings.Split(uri[1:], "/")
+	plan := fastRoutePlan{
+		segments: make([]routeSegmentMatcher, 0, len(parts)),
+	}
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		segment, ok := compileRouteSegmentMatcher(part)
+		if !ok {
+			return fastRoutePlan{}, false
+		}
+		switch segment.kind {
+		case routeSegmentMatcherKindStatic, routeSegmentMatcherKindNamed:
+		case routeSegmentMatcherKindPattern:
+			plan.hasPattern = true
+		case routeSegmentMatcherKindCatchAll:
+			if index != len(parts)-1 {
+				return fastRoutePlan{}, false
+			}
+		default:
+			return fastRoutePlan{}, false
+		}
+		plan.segments = append(plan.segments, segment)
+	}
+	return plan, true
+}
+
+func (n *routeFastNode) insertFastPlan(
+	plan fastRoutePlan, handler *HandlerItem, compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) {
+	if len(plan.segments) == 0 {
+		n.list = insertHandlerItemByPriority(n.list, handler, compare)
+		return
+	}
+	var staticPrefix strings.Builder
+	flushStaticPrefix := func() {
+		if staticPrefix.Len() == 0 {
+			return
+		}
+		n = n.insertStaticPrefix(staticPrefix.String())
+		staticPrefix.Reset()
+	}
+	for _, segment := range plan.segments {
+		switch segment.kind {
+		case routeSegmentMatcherKindStatic:
+			staticPrefix.WriteByte('/')
+			staticPrefix.WriteString(segment.value)
+
+		case routeSegmentMatcherKindNamed:
+			staticPrefix.WriteByte('/')
+			flushStaticPrefix()
+			n = n.insertFastParam(segment.value)
+
+		case routeSegmentMatcherKindPattern:
+			staticPrefix.WriteByte('/')
+			flushStaticPrefix()
+			n = n.insertFastPattern(segment)
+
+		case routeSegmentMatcherKindCatchAll:
+			flushStaticPrefix()
+			n.insertFastCatchAll(segment.value, handler, compare)
+			return
+		}
+	}
+	flushStaticPrefix()
+	n.list = insertHandlerItemByPriority(n.list, handler, compare)
+}
+
+func (n *routeFastNode) insertFastParam(name string) *routeFastNode {
+	if n.param == nil {
+		n.param = &routeFastNode{}
+		n.paramName = name
+	} else if n.paramName != name {
+		n.paramNameConflict = true
+	}
+	return n.param
+}
+
+func (n *routeFastNode) insertFastCatchAll(
+	name string,
+	handler *HandlerItem,
+	compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) {
+	if n.catchAll == nil {
+		n.catchAll = &routeFastNode{}
+		n.catchAllName = name
+	} else if n.catchAllName != name {
+		n.catchAllNameConflict = true
+	}
+	n.catchAll.list = insertHandlerItemByPriority(n.catchAll.list, handler, compare)
+}
+
+func (n *routeFastNode) insertFastPattern(segment routeSegmentMatcher) *routeFastNode {
+	key := routeFastPatternKey(segment.parts)
+	for i := range n.patterns {
+		if n.patterns[i].key == key {
+			return n.patterns[i].node
+		}
+	}
+	child := &routeFastNode{}
+	n.patterns = append(n.patterns, routeFastPatternChild{
+		key:           key,
+		segment:       segment,
+		node:          child,
+		literalLength: routePatternLiteralLength(segment.parts),
+		firstStatic:   routePatternFirstStatic(segment.parts),
+		lastStatic:    routePatternLastStatic(segment.parts),
+	})
+	return child
+}
+
+func routeFastPatternKey(parts []routeSegmentPart) string {
+	var builder strings.Builder
+	for _, part := range parts {
+		if part.name != "" {
+			builder.WriteByte('{')
+			builder.WriteString(part.name)
+			builder.WriteByte('}')
+			continue
+		}
+		builder.WriteString(part.static)
+	}
+	return builder.String()
+}
+
+func routePatternLiteralLength(parts []routeSegmentPart) int {
+	length := 0
+	for _, part := range parts {
+		length += len(part.static)
+	}
+	return length
+}
+
+func routePatternFirstStatic(parts []routeSegmentPart) string {
+	if len(parts) > 0 && parts[0].static != "" {
+		return parts[0].static
+	}
+	return ""
+}
+
+func routePatternLastStatic(parts []routeSegmentPart) string {
+	if len(parts) > 0 && parts[len(parts)-1].static != "" {
+		return parts[len(parts)-1].static
+	}
+	return ""
 }
 
 func (n *routeFastNode) insertFastPath(
@@ -643,11 +907,10 @@ func (s *Server) compareRouterPriority(newItem *HandlerItem, oldItem *HandlerIte
 
 	// It then compares the accuracy of their http method,
 	// the more accurate the more priority.
-	if newItem.Router.Method != defaultMethod {
-		return true
-	}
-	if oldItem.Router.Method != defaultMethod {
-		return true
+	newMethodIsSpecific := newItem.Router.Method != defaultMethod
+	oldMethodIsSpecific := oldItem.Router.Method != defaultMethod
+	if newMethodIsSpecific != oldMethodIsSpecific {
+		return newMethodIsSpecific
 	}
 
 	// If they have different router type,

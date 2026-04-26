@@ -115,22 +115,98 @@ func (s *Server) searchFastHandlers(method, path, domain string) (
 		arrayBuffer [16]string
 	)
 	array = splitRouterSearchPath(path, arrayBuffer[:0])
-	searchDomain := func(domainItem string) {
-		if parsedItems != nil {
-			return
-		}
-		root := s.serveFastTree[domainItem]
-		if root == nil {
-			return
-		}
-		parsedItems, serveItem, hasHook, hasServe = root.search(method, path, array, s.config.RouteComplexEnabled)
+	defaultRoot := s.serveFastTree[DefaultDomainName]
+	var domainRoot *routeFastNode
+	if domain != "" && domain != DefaultDomainName {
+		domainRoot = s.serveFastTree[domain]
 	}
-	searchDomain(DefaultDomainName)
-	searchDomain(domain)
+	switch {
+	case defaultRoot == nil && domainRoot == nil:
+		return nil, nil, false, false
+	case domainRoot == nil:
+		return defaultRoot.search(
+			method,
+			path,
+			array,
+			s.config.RouteComplexEnabled,
+			s.config.RouteComplexEnabled,
+			s.compareRouterPriority,
+		)
+	case defaultRoot == nil:
+		return domainRoot.search(
+			method,
+			path,
+			array,
+			s.config.RouteComplexEnabled,
+			s.config.RouteComplexEnabled,
+			s.compareRouterPriority,
+		)
+	}
+
+	if s.config.RouteComplexEnabled {
+		if defaultRoot.matchesFallback(method, path, array) || domainRoot.matchesFallback(method, path, array) {
+			return nil, nil, false, false
+		}
+	}
+
+	var (
+		middlewareCount int
+		seenHandlers    routeSearchSeen
+	)
+	parsedItemList := make([]*HandlerItemParsed, 0, 2)
+	for _, root := range [2]*routeFastNode{defaultRoot, domainRoot} {
+		domainItems, _, _, _ := root.search(
+			method,
+			path,
+			array,
+			s.config.RouteComplexEnabled,
+			false,
+			s.compareRouterPriority,
+		)
+		for _, item := range domainItems {
+			if seenHandlers.Has(item.Handler.Id) {
+				continue
+			}
+			if hasServe {
+				switch item.Handler.Type {
+				case HandlerTypeHandler, HandlerTypeObject:
+					continue
+				}
+			}
+			switch item.Handler.Type {
+			case HandlerTypeHandler, HandlerTypeObject:
+				hasServe = true
+				serveItem = item
+				parsedItemList = append(parsedItemList, item)
+
+			case HandlerTypeMiddleware:
+				parsedItemList = append(parsedItemList, nil)
+				copy(parsedItemList[middlewareCount+1:], parsedItemList[middlewareCount:])
+				parsedItemList[middlewareCount] = item
+				middlewareCount++
+
+			case HandlerTypeHook:
+				hasHook = true
+				parsedItemList = append(parsedItemList, item)
+
+			default:
+				panic(gerror.Newf(`invalid handler type %s`, item.Handler.Type))
+			}
+		}
+	}
+	if len(parsedItemList) > 0 {
+		parsedItems = parsedItemList
+	}
 	return
 }
 
-func (n *routeFastNode) search(method, path string, parts []string, checkFallback bool) (
+func (n *routeFastNode) search(
+	method, path string,
+	parts []string,
+	complexEnabled bool,
+	checkFallback bool,
+	compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) (
 	parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool,
 ) {
 	var (
@@ -140,22 +216,19 @@ func (n *routeFastNode) search(method, path string, parts []string, checkFallbac
 		remainingPath   = path
 		values          map[string]string
 		valuesReliable  = true
-		middlewareCount = 0
-		parsedItemList  = make([]*HandlerItemParsed, 0, 2)
-		seenHandlers    routeSearchSeen
 	)
 	for {
-		if node.catchAll != nil && len(node.catchAll.list) > 0 {
-			candidates = appendRouteFastCandidate(
-				candidates,
-				node.catchAll.list,
-				valuesWithFastRouteCatchAll(values, node.catchAllName, remainingPath),
-				valuesReliable && !node.catchAllNameConflict,
-			)
-		}
 		if remainingPath == "" {
 			if len(node.list) > 0 {
 				candidates = appendRouteFastCandidate(candidates, node.list, values, valuesReliable)
+			}
+			if node.catchAll != nil && len(node.catchAll.list) > 0 {
+				candidates = appendRouteFastCandidate(
+					candidates,
+					node.catchAll.list,
+					valuesWithFastRouteCatchAll(values, node.catchAllName, remainingPath),
+					valuesReliable && !node.catchAllNameConflict,
+				)
 			}
 			break
 		}
@@ -164,25 +237,45 @@ func (n *routeFastNode) search(method, path string, parts []string, checkFallbac
 			if len(node.list) > 0 {
 				candidates = appendRouteFastCandidate(candidates, node.list, values, valuesReliable)
 			}
+			if node.catchAll != nil && len(node.catchAll.list) > 0 {
+				candidates = appendRouteFastCandidate(
+					candidates,
+					node.catchAll.list,
+					valuesWithFastRouteCatchAll(values, node.catchAllName, remainingPath),
+					valuesReliable && !node.catchAllNameConflict,
+				)
+			}
 			break
 		}
+		if node.catchAll != nil && len(node.catchAll.list) > 0 {
+			candidates = appendRouteFastCandidate(
+				candidates,
+				node.catchAll.list,
+				valuesWithFastRouteCatchAll(values, node.catchAllName, remainingPath),
+				valuesReliable && !node.catchAllNameConflict,
+			)
+		}
+		if remainingPath[0] != '/' && complexEnabled && len(node.patterns) > 0 {
+			candidates = append(candidates, collectRouteFastPatternCandidates(
+				node, remainingPath, values, complexEnabled,
+			)...)
+		}
 		if child := node.findStaticChild(remainingPath[0]); child != nil && strings.HasPrefix(remainingPath, child.path) {
+			if node.param != nil && remainingPath[0] != '/' {
+				candidates = append(candidates, collectRouteFastParamCandidates(
+					node, remainingPath, values, valuesReliable, complexEnabled,
+				)...)
+			}
 			remainingPath = remainingPath[len(child.path):]
 			node = child
 			continue
 		}
 		if node.param != nil && remainingPath[0] != '/' {
-			endIndex := strings.IndexByte(remainingPath, '/')
-			paramValue := remainingPath
-			if endIndex >= 0 {
-				paramValue = remainingPath[:endIndex]
-				remainingPath = remainingPath[endIndex:]
-			} else {
-				remainingPath = ""
-			}
+			paramValue, newRemainingPath := splitFastRouteParamValue(remainingPath)
 			if paramValue == "" {
 				break
 			}
+			remainingPath = newRemainingPath
 			if !node.paramNameConflict {
 				values = setFastRouteValue(values, node.paramName, paramValue)
 			} else {
@@ -196,6 +289,226 @@ func (n *routeFastNode) search(method, path string, parts []string, checkFallbac
 	if len(candidates) == 0 {
 		return nil, nil, false, false
 	}
+	if routeFastCandidatesRequirePriorityMerge(candidates) {
+		parsedItems, serveItem, hasHook, hasServe = resolveFastCandidatesByPriority(
+			candidates,
+			method,
+			path,
+			parts,
+			compare,
+		)
+	} else {
+		parsedItems, serveItem, hasHook, hasServe = resolveFastCandidates(
+			candidates,
+			method,
+			path,
+			parts,
+		)
+	}
+	if len(parsedItems) == 0 {
+		return nil, nil, false, false
+	}
+	if checkFallback && n.matchesFallback(method, path, parts) {
+		return nil, nil, false, false
+	}
+	return parsedItems, serveItem, hasHook, hasServe
+}
+
+func collectRouteFastParamCandidates(
+	node *routeFastNode,
+	remainingPath string,
+	values map[string]string,
+	valuesReliable bool,
+	complexEnabled bool,
+) []routeFastCandidate {
+	if node.param == nil || remainingPath == "" || remainingPath[0] == '/' {
+		return nil
+	}
+	paramValue, remainingPath := splitFastRouteParamValue(remainingPath)
+	if paramValue == "" {
+		return nil
+	}
+	paramValues := values
+	if !node.paramNameConflict {
+		paramValues = setFastRouteValue(cloneRouteValues(values), node.paramName, paramValue)
+	} else {
+		valuesReliable = false
+	}
+	return collectRouteFastBranchCandidates(node.param, remainingPath, paramValues, valuesReliable, complexEnabled)
+}
+
+func collectRouteFastBranchCandidates(
+	node *routeFastNode,
+	remainingPath string,
+	values map[string]string,
+	valuesReliable bool,
+	complexEnabled bool,
+) []routeFastCandidate {
+	var (
+		candidateBuffer [8]routeFastCandidate
+		candidates      = candidateBuffer[:0]
+	)
+	for {
+		if remainingPath == "" {
+			if len(node.list) > 0 {
+				candidates = appendRouteFastCandidate(candidates, node.list, values, valuesReliable)
+			}
+			if node.catchAll != nil && len(node.catchAll.list) > 0 {
+				candidates = appendRouteFastCandidate(
+					candidates,
+					node.catchAll.list,
+					valuesWithFastRouteCatchAll(values, node.catchAllName, remainingPath),
+					valuesReliable && !node.catchAllNameConflict,
+				)
+			}
+			return cloneRouteFastCandidates(candidates)
+		}
+		if remainingPath == "/" {
+			if len(node.list) > 0 {
+				candidates = appendRouteFastCandidate(candidates, node.list, values, valuesReliable)
+			}
+			if node.catchAll != nil && len(node.catchAll.list) > 0 {
+				candidates = appendRouteFastCandidate(
+					candidates,
+					node.catchAll.list,
+					valuesWithFastRouteCatchAll(values, node.catchAllName, remainingPath),
+					valuesReliable && !node.catchAllNameConflict,
+				)
+			}
+			return cloneRouteFastCandidates(candidates)
+		}
+		if node.catchAll != nil && len(node.catchAll.list) > 0 {
+			candidates = appendRouteFastCandidate(
+				candidates,
+				node.catchAll.list,
+				valuesWithFastRouteCatchAll(values, node.catchAllName, remainingPath),
+				valuesReliable && !node.catchAllNameConflict,
+			)
+		}
+		if remainingPath[0] != '/' && complexEnabled && len(node.patterns) > 0 {
+			candidates = append(candidates, collectRouteFastPatternCandidates(
+				node, remainingPath, values, complexEnabled,
+			)...)
+		}
+		if child := node.findStaticChild(remainingPath[0]); child != nil && strings.HasPrefix(remainingPath, child.path) {
+			if node.param != nil && remainingPath[0] != '/' {
+				candidates = append(candidates, collectRouteFastParamCandidates(
+					node, remainingPath, values, valuesReliable, complexEnabled,
+				)...)
+			}
+			remainingPath = remainingPath[len(child.path):]
+			node = child
+			continue
+		}
+		if node.param != nil && remainingPath[0] != '/' {
+			paramValue, newRemainingPath := splitFastRouteParamValue(remainingPath)
+			if paramValue == "" {
+				return candidates
+			}
+			remainingPath = newRemainingPath
+			if !node.paramNameConflict {
+				values = setFastRouteValue(values, node.paramName, paramValue)
+			} else {
+				valuesReliable = false
+			}
+			node = node.param
+			continue
+		}
+		return cloneRouteFastCandidates(candidates)
+	}
+}
+
+func collectRouteFastPatternCandidates(
+	node *routeFastNode,
+	remainingPath string,
+	values map[string]string,
+	complexEnabled bool,
+) []routeFastCandidate {
+	if !complexEnabled || len(node.patterns) == 0 || remainingPath == "" || remainingPath[0] == '/' {
+		return nil
+	}
+	segmentValue, newRemainingPath := splitFastRouteParamValue(remainingPath)
+	if segmentValue == "" {
+		return nil
+	}
+	var candidates []routeFastCandidate
+	for i := range node.patterns {
+		child := &node.patterns[i]
+		if child.firstStatic != "" && !strings.HasPrefix(segmentValue, child.firstStatic) {
+			continue
+		}
+		if child.lastStatic != "" && !strings.HasSuffix(segmentValue, child.lastStatic) {
+			continue
+		}
+		if len(segmentValue) < child.literalLength+child.segment.captureCount {
+			continue
+		}
+		matched, newValues := matchRoutePatternSegment(
+			child.segment.parts,
+			segmentValue,
+			cloneRouteValues(values),
+			len(values)+child.segment.captureCount,
+		)
+		if !matched {
+			continue
+		}
+		branchCandidates := collectRouteFastBranchCandidates(
+			child.node,
+			newRemainingPath,
+			newValues,
+			false,
+			complexEnabled,
+		)
+		for j := range branchCandidates {
+			branchCandidates[j].requiresPriorityMerge = true
+		}
+		candidates = append(candidates, branchCandidates...)
+	}
+	return candidates
+}
+
+func cloneRouteFastCandidates(candidates []routeFastCandidate) []routeFastCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+	return append([]routeFastCandidate(nil), candidates...)
+}
+
+func appendRouteFastCandidate(
+	candidates []routeFastCandidate, list []*HandlerItem, values map[string]string, valuesReliable bool,
+) []routeFastCandidate {
+	return append(candidates, routeFastCandidate{
+		list:           list,
+		values:         values,
+		valuesReliable: valuesReliable,
+	})
+}
+
+func routeFastCandidatesRequirePriorityMerge(candidates []routeFastCandidate) bool {
+	for i := range candidates {
+		if candidates[i].requiresPriorityMerge {
+			return true
+		}
+	}
+	return false
+}
+
+type routeFastMatchedItem struct {
+	item   *HandlerItem
+	values map[string]string
+}
+
+func resolveFastCandidates(
+	candidates []routeFastCandidate,
+	method string,
+	path string,
+	parts []string,
+) (parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool) {
+	var (
+		middlewareCount int
+		parsedItemList  = make([]*HandlerItemParsed, 0, 2)
+		seenHandlers    routeSearchSeen
+	)
 	for i := len(candidates) - 1; i >= 0; i-- {
 		candidate := candidates[i]
 		for _, item := range candidate.list {
@@ -244,20 +557,125 @@ func (n *routeFastNode) search(method, path string, parts []string, checkFallbac
 	if len(parsedItemList) == 0 {
 		return nil, nil, false, false
 	}
-	if checkFallback && n.matchesFallback(method, path, parts) {
+	return parsedItemList, serveItem, hasHook, hasServe
+}
+
+func resolveFastCandidatesByPriority(
+	candidates []routeFastCandidate,
+	method string,
+	path string,
+	parts []string,
+	compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) (parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool) {
+	var seenHandlers routeSearchSeen
+	matchedItems := make([]routeFastMatchedItem, 0, len(candidates))
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		for _, item := range candidate.list {
+			if seenHandlers.Has(item.Id) {
+				continue
+			}
+			if item.Router.Method != defaultMethod && item.Router.Method != method {
+				continue
+			}
+			itemValues := candidate.values
+			if !candidate.valuesReliable {
+				matched, matchedValues := item.Router.match(path, parts)
+				if !matched {
+					continue
+				}
+				itemValues = matchedValues
+			}
+			matchedItems = insertMatchedFastItemByPriority(
+				matchedItems,
+				routeFastMatchedItem{item: item, values: itemValues},
+				compare,
+			)
+		}
+	}
+	var middlewareCount int
+	parsedItemList := make([]*HandlerItemParsed, 0, len(matchedItems))
+	for _, matched := range matchedItems {
+		item := matched.item
+		if hasServe {
+			switch item.Type {
+			case HandlerTypeHandler, HandlerTypeObject:
+				continue
+			}
+		}
+		parsedItem := &HandlerItemParsed{Handler: item, Values: matched.values}
+		switch item.Type {
+		case HandlerTypeHandler, HandlerTypeObject:
+			hasServe = true
+			serveItem = parsedItem
+			parsedItemList = append(parsedItemList, parsedItem)
+
+		case HandlerTypeMiddleware:
+			parsedItemList = append(parsedItemList, nil)
+			copy(parsedItemList[middlewareCount+1:], parsedItemList[middlewareCount:])
+			parsedItemList[middlewareCount] = parsedItem
+			middlewareCount++
+
+		case HandlerTypeHook:
+			hasHook = true
+			parsedItemList = append(parsedItemList, parsedItem)
+
+		default:
+			panic(gerror.Newf(`invalid handler type %s`, item.Type))
+		}
+	}
+	if len(parsedItemList) == 0 {
 		return nil, nil, false, false
 	}
 	return parsedItemList, serveItem, hasHook, hasServe
 }
 
-func appendRouteFastCandidate(
-	candidates []routeFastCandidate, list []*HandlerItem, values map[string]string, valuesReliable bool,
-) []routeFastCandidate {
-	return append(candidates, routeFastCandidate{
-		list:           list,
-		values:         values,
-		valuesReliable: valuesReliable,
-	})
+func insertMatchedFastItemByPriority(
+	items []routeFastMatchedItem,
+	next routeFastMatchedItem,
+	compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) []routeFastMatchedItem {
+	for i, old := range items {
+		if compareMatchedFastItemPriority(next.item, old.item, compare) {
+			items = append(items, routeFastMatchedItem{})
+			copy(items[i+1:], items[i:])
+			items[i] = next
+			return items
+		}
+	}
+	return append(items, next)
+}
+
+func compareMatchedFastItemPriority(
+	newItem *HandlerItem,
+	oldItem *HandlerItem,
+	compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+) bool {
+	if newItem.Type == HandlerTypeMiddleware && oldItem.Type == HandlerTypeMiddleware {
+		if newItem.Router.Priority != oldItem.Router.Priority {
+			return newItem.Router.Priority > oldItem.Router.Priority
+		}
+		return newItem.Id < oldItem.Id
+	}
+	newIsServe := newItem.Type == HandlerTypeHandler || newItem.Type == HandlerTypeObject
+	oldIsServe := oldItem.Type == HandlerTypeHandler || oldItem.Type == HandlerTypeObject
+	if newIsServe && oldIsServe {
+		newHigher := compare(newItem, oldItem)
+		oldHigher := compare(oldItem, newItem)
+		if newHigher && oldHigher {
+			return newItem.Id > oldItem.Id
+		}
+		return newHigher
+	}
+	newHigher := compare(newItem, oldItem)
+	oldHigher := compare(oldItem, newItem)
+	if newHigher != oldHigher {
+		return newHigher
+	}
+	if newItem.Router.Priority != oldItem.Router.Priority {
+		return newItem.Router.Priority > oldItem.Router.Priority
+	}
+	return newItem.Id < oldItem.Id
 }
 
 func (n *routeFastNode) findStaticChild(firstByte byte) *routeFastNode {
@@ -265,6 +683,14 @@ func (n *routeFastNode) findStaticChild(firstByte byte) *routeFastNode {
 		return n.children[index]
 	}
 	return nil
+}
+
+func splitFastRouteParamValue(path string) (value, remainingPath string) {
+	endIndex := strings.IndexByte(path, '/')
+	if endIndex >= 0 {
+		return path[:endIndex], path[endIndex:]
+	}
+	return path, ""
 }
 
 func setFastRouteValue(values map[string]string, name, value string) map[string]string {
@@ -302,7 +728,17 @@ func cloneRouteValues(values map[string]string) map[string]string {
 
 func (n *routeFastNode) matchesFallback(method, path string, parts []string) bool {
 	// Complex routes keep the legacy matcher as source of truth only when they overlap the current request.
-	for _, item := range n.fallback {
+	if n.matchesFallbackList(n.fallback, method, path, parts) {
+		return true
+	}
+	if len(parts) == 0 || n.fallbackByFirstPart == nil {
+		return false
+	}
+	return n.matchesFallbackList(n.fallbackByFirstPart[parts[0]], method, path, parts)
+}
+
+func (n *routeFastNode) matchesFallbackList(list []*HandlerItem, method, path string, parts []string) bool {
+	for _, item := range list {
 		if item.Router.Method != defaultMethod && item.Router.Method != method {
 			continue
 		}
@@ -328,7 +764,13 @@ func newHandlerCacheItem(
 	}
 	for index, item := range parsedItems {
 		if len(item.Values) > 0 {
-			// Router values are request-path specific, so dynamic routes cache only the matched handler plan.
+			if item == serveItem {
+				// Router values for the serving handler are request-path specific.
+				// Caching every concrete dynamic path pollutes the route LRU for high-cardinality paths like /user/:id.
+				return nil
+			}
+			// Non-serving handlers can still have path values, for example global middleware.
+			// Cache only the handler plan and recompute those values for the current request path.
 			cacheItem.parsedItems = nil
 			cacheItem.serveItem = nil
 			cacheItem.handlers = make([]*HandlerItem, len(parsedItems))

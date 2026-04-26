@@ -59,7 +59,8 @@ func Test_Router_DomainBasic(t *testing.T) {
 	})
 	gtest.C(t, func(t *gtest.T) {
 		client := g.Client()
-		client.SetPrefix(fmt.Sprintf("http://local:%d", s.GetListenedPort()))
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client.SetHeader("Host", "local")
 		t.Assert(client.GetContent(ctx, "/john"), "")
 		t.Assert(client.GetContent(ctx, "/john/update"), "john")
 		t.Assert(client.GetContent(ctx, "/john/edit"), "edit")
@@ -133,7 +134,8 @@ func Test_Router_DomainMethod(t *testing.T) {
 
 	gtest.C(t, func(t *gtest.T) {
 		client := g.Client()
-		client.SetPrefix(fmt.Sprintf("http://local:%d", s.GetListenedPort()))
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client.SetHeader("Host", "local")
 
 		resp1, err := client.Get(ctx, "/get")
 		t.AssertNil(err)
@@ -227,7 +229,8 @@ func Test_Router_DomainStatus(t *testing.T) {
 	})
 	gtest.C(t, func(t *gtest.T) {
 		client := g.Client()
-		client.SetPrefix(fmt.Sprintf("http://local:%d", s.GetListenedPort()))
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client.SetHeader("Host", "local")
 
 		resp1, err := client.Get(ctx, "/200")
 		t.AssertNil(err)
@@ -281,7 +284,8 @@ func Test_Router_DomainCustomStatusHandler(t *testing.T) {
 	})
 	gtest.C(t, func(t *gtest.T) {
 		client := g.Client()
-		client.SetPrefix(fmt.Sprintf("http://local:%d", s.GetListenedPort()))
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client.SetHeader("Host", "local")
 
 		t.Assert(client.GetContent(ctx, "/"), "hello")
 		t.Assert(client.GetContent(ctx, "/ThisDoesNotExist"), "404 page")
@@ -313,7 +317,8 @@ func Test_Router_Domain404(t *testing.T) {
 	})
 	gtest.C(t, func(t *gtest.T) {
 		client := g.Client()
-		client.SetPrefix(fmt.Sprintf("http://local:%d", s.GetListenedPort()))
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client.SetHeader("Host", "local")
 
 		t.Assert(client.GetContent(ctx, "/"), "hello")
 	})
@@ -345,7 +350,8 @@ func Test_Router_DomainGroup(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	gtest.C(t, func(t *gtest.T) {
 		client1 := g.Client()
-		client1.SetPrefix(fmt.Sprintf("http://local:%d", s.GetListenedPort()))
+		client1.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		client1.SetHeader("Host", "local")
 
 		client2 := g.Client()
 		client2.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
