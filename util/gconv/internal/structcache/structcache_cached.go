@@ -39,7 +39,7 @@ func (cf *Converter) GetCachedStructInfo(structType reflect.Type, priorityTag st
 	} else {
 		priorityTagArray = gtag.StructTagPriority
 	}
-	cf.parseStructToCachedStructInfo(structType, parentIndex, cachedStructInfo, priorityTagArray)
+	cf.parseStructToCachedStructInfo(structType, parentIndex, cachedStructInfo, priorityTagArray, 0, true)
 	cf.storeCachedStructInfo(structType, cachedStructInfo)
 	return cachedStructInfo
 }
@@ -65,6 +65,8 @@ func (cf *Converter) parseStructToCachedStructInfo(
 	fieldIndexes []int,
 	cachedStructInfo *CachedStructInfo,
 	priorityTagArray []string,
+	unsafeOffset uintptr,
+	unsafeOffsetAvailable bool,
 ) {
 	var (
 		fieldName   string
@@ -87,12 +89,15 @@ func (cf *Converter) parseStructToCachedStructInfo(
 
 		copyFieldIndexes := make([]int, len(fieldIndexes))
 		copy(copyFieldIndexes, fieldIndexes)
+		fieldUnsafeOffset := unsafeOffset + structField.Offset
 
 		// normal basic attributes.
 		if structField.Anonymous {
 			// handle struct attributes, it might be struct/*struct embedded..
+			embeddedUnsafeOffsetAvailable := unsafeOffsetAvailable
 			if fieldType.Kind() == reflect.Pointer {
 				fieldType = fieldType.Elem()
+				embeddedUnsafeOffsetAvailable = false
 			}
 			if fieldType.Kind() != reflect.Struct {
 				continue
@@ -103,9 +108,15 @@ func (cf *Converter) parseStructToCachedStructInfo(
 			}
 			if structField.Tag != "" {
 				// Do not add anonymous structures without tags
-				cachedStructInfo.AddField(structField, append(copyFieldIndexes, i), priorityTagArray)
+				cachedStructInfo.AddField(
+					structField, append(copyFieldIndexes, i), priorityTagArray,
+					fieldUnsafeOffset, unsafeOffsetAvailable,
+				)
 			}
-			cf.parseStructToCachedStructInfo(fieldType, append(copyFieldIndexes, i), cachedStructInfo, priorityTagArray)
+			cf.parseStructToCachedStructInfo(
+				fieldType, append(copyFieldIndexes, i), cachedStructInfo, priorityTagArray,
+				fieldUnsafeOffset, embeddedUnsafeOffsetAvailable,
+			)
 			continue
 		}
 		// Do not directly use append(fieldIndexes, i)
@@ -113,6 +124,9 @@ func (cf *Converter) parseStructToCachedStructInfo(
 		// which are caused by the slice expansion mechanism
 		// So it is necessary to allocate a separate index for each field
 		// See details https://github.com/gogf/gf/issues/3789
-		cachedStructInfo.AddField(structField, append(copyFieldIndexes, i), priorityTagArray)
+		cachedStructInfo.AddField(
+			structField, append(copyFieldIndexes, i), priorityTagArray,
+			fieldUnsafeOffset, unsafeOffsetAvailable,
+		)
 	}
 }

@@ -70,7 +70,7 @@ func (c *Converter) SliceUint(anyInput any, option ...SliceOption) ([]uint, erro
 			array[k] = uint(v)
 		}
 	case string:
-		byteValue := []byte(value)
+		byteValue := unsafeStringToBytes(value)
 		if json.Valid(byteValue) {
 			if err = json.UnmarshalUseNumber(byteValue, &array); array != nil {
 				return array, err
@@ -245,7 +245,7 @@ func (c *Converter) SliceUint32(anyInput any, option ...SliceOption) ([]uint32, 
 			array[k] = uint32(v)
 		}
 	case string:
-		byteValue := []byte(value)
+		byteValue := unsafeStringToBytes(value)
 		if json.Valid(byteValue) {
 			if err = json.UnmarshalUseNumber(byteValue, &array); array != nil {
 				return array, err
@@ -416,7 +416,7 @@ func (c *Converter) SliceUint64(anyInput any, option ...SliceOption) ([]uint64, 
 			array[k] = uint64(v)
 		}
 	case string:
-		byteValue := []byte(value)
+		byteValue := unsafeStringToBytes(value)
 		if json.Valid(byteValue) {
 			if err = json.UnmarshalUseNumber(byteValue, &array); array != nil {
 				return array, err

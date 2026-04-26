@@ -396,7 +396,7 @@ func (c *Converter) doConvertWithJSONCheck(srcValue any, dstPointer any) (ok boo
 		}
 
 	case string:
-		if valueBytes := []byte(valueResult); json.Valid(valueBytes) {
+		if valueBytes := unsafeStringToBytes(valueResult); json.Valid(valueBytes) {
 			if dstPointerReflectType, ok := dstPointer.(reflect.Value); ok {
 				if dstPointerReflectType.Kind() == reflect.Pointer {
 					if dstPointerReflectType.IsNil() {

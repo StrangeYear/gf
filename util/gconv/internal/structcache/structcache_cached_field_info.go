@@ -85,7 +85,7 @@ type CachedFieldInfoBase struct {
 	// for same-typed builtin scalar values.
 	IsDirectlyAssignable bool
 
-	// UnsafeOffset is the field offset used for unsafe direct assignment.
+	// UnsafeOffset is the field offset from the root struct used for unsafe direct assignment.
 	UnsafeOffset uintptr
 
 	// IsUnsafeDirectlyAssignable marks whether this field can use unsafe direct assignment.

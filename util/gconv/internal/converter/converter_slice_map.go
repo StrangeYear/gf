@@ -31,7 +31,7 @@ func (c *Converter) SliceMap(value any, option ...SliceMapOption) ([]map[string]
 	case string:
 		list := make([]map[string]any, 0)
 		if len(r) > 0 && r[0] == '[' && r[len(r)-1] == ']' {
-			if err := json.UnmarshalUseNumber([]byte(r), &list); err != nil {
+			if err := json.UnmarshalUseNumber(unsafeStringToBytes(r), &list); err != nil {
 				return nil, err
 			}
 			return list, nil

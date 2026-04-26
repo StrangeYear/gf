@@ -122,7 +122,7 @@ func (c *Converter) SliceBool(anyInput any, option ...SliceOption) ([]bool, erro
 			array[k] = bb
 		}
 	case string:
-		byteValue := []byte(value)
+		byteValue := unsafeStringToBytes(value)
 		if json.Valid(byteValue) {
 			if err = json.UnmarshalUseNumber(byteValue, &array); array != nil {
 				return array, err

@@ -47,7 +47,8 @@ var (
 		Extra:       map[string]int{"a": 1, "b": 2},
 		Description: "benchmark data",
 	}
-	mapBenchResult map[string]any
+	mapBenchJSONString = `{"name":"gf","score":100,"age":98,"id":199,"tags":["fast","stable"],"extra":{"a":1,"b":2},"description":"benchmark data"}`
+	mapBenchResult     map[string]any
 )
 
 func Benchmark_Map_StringAny_NoDeep(b *testing.B) {
@@ -78,6 +79,14 @@ func Benchmark_Map_Struct_Deep(b *testing.B) {
 	var result map[string]any
 	for i := 0; i < b.N; i++ {
 		result = Map(mapBenchStructValue, MapOption{Deep: true})
+	}
+	mapBenchResult = result
+}
+
+func Benchmark_Map_JSONString(b *testing.B) {
+	var result map[string]any
+	for i := 0; i < b.N; i++ {
+		result = Map(mapBenchJSONString)
 	}
 	mapBenchResult = result
 }

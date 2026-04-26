@@ -106,7 +106,7 @@ func (c *Converter) SliceFloat32(anyInput any, option ...SliceOption) ([]float32
 			array[k] = f
 		}
 	case string:
-		byteValue := []byte(value)
+		byteValue := unsafeStringToBytes(value)
 		if json.Valid(byteValue) {
 			if err = json.UnmarshalUseNumber(byteValue, &array); array != nil {
 				return array, err
@@ -307,7 +307,7 @@ func (c *Converter) SliceFloat64(anyInput any, option ...SliceOption) ([]float64
 			array[k] = f
 		}
 	case string:
-		byteValue := []byte(value)
+		byteValue := unsafeStringToBytes(value)
 		if json.Valid(byteValue) {
 			if err = json.UnmarshalUseNumber(byteValue, &array); array != nil {
 				return array, err

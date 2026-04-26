@@ -34,6 +34,18 @@ type structType8 struct {
 	ID          int
 }
 
+type structEmbeddedType struct {
+	structEmbeddedBase
+	Name string `json:"name"`
+	Code string `json:"code"`
+}
+
+type structEmbeddedBase struct {
+	Score int `json:"score"`
+	Age   int
+	ID    int
+}
+
 var (
 	structMap = map[string]any{
 		"name":  "gf",
@@ -57,6 +69,16 @@ var (
 		"id-type":     2,
 	}
 
+	structEmbeddedMap = map[string]any{
+		"name":  "gf",
+		"code":  "1",
+		"score": 100,
+		"Age":   98,
+		"ID":    199,
+	}
+
+	structJSONFields8 = `{"name":"gf","score":100,"Age":98,"ID":199,"category-Id":"1","price":198.09,"code":"1","image":"https://goframe.org","description":"This is the data for testing eight fields","status":1,"id-type":2}`
+
 	structObj = structType{
 		Name:  "john",
 		Score: 60,
@@ -67,8 +89,9 @@ var (
 		Name:  "john",
 		Score: 60,
 	}
-	structPointer8   = &structType8{}
-	structPointerNil *structType
+	structPointer8        = &structType8{}
+	structEmbeddedPointer = &structEmbeddedType{}
+	structPointerNil      *structType
 
 	// struct slice
 	structSliceNil []structType
@@ -93,6 +116,18 @@ func Benchmark_Struct_Basic(b *testing.B) {
 func Benchmark_doStruct_Fields8_Basic_MapToStruct(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		defaultConverter.Struct(structMapFields8, structPointer8, StructOption{})
+	}
+}
+
+func Benchmark_doStruct_Embedded_Basic_MapToStruct(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		defaultConverter.Struct(structEmbeddedMap, structEmbeddedPointer, StructOption{})
+	}
+}
+
+func Benchmark_doStruct_JSONString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		defaultConverter.Struct(structJSONFields8, structPointer8, StructOption{})
 	}
 }
 

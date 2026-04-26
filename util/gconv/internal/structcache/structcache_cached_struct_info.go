@@ -51,12 +51,19 @@ func (csi *CachedStructInfo) GetFieldInfo(fieldName string) *CachedFieldInfo {
 	return csi.tagOrFiledNameToFieldInfoMap[fieldName]
 }
 
-func (csi *CachedStructInfo) AddField(field reflect.StructField, fieldIndexes []int, priorityTags []string) {
+func (csi *CachedStructInfo) AddField(
+	field reflect.StructField,
+	fieldIndexes []int,
+	priorityTags []string,
+	unsafeOffset uintptr,
+	unsafeOffsetAvailable bool,
+) {
 	tagOrFieldNameArray := csi.genPriorityTagAndFieldName(field, priorityTags)
 	for _, tagOrFieldName := range tagOrFieldNameArray {
 		cachedFieldInfo, found := csi.tagOrFiledNameToFieldInfoMap[tagOrFieldName]
 		newFieldInfo := csi.makeOrCopyCachedInfo(
 			field, fieldIndexes, priorityTags, cachedFieldInfo, tagOrFieldName,
+			unsafeOffset, unsafeOffsetAvailable,
 		)
 		if newFieldInfo.IsField {
 			csi.fieldConvertInfos = append(csi.fieldConvertInfos, newFieldInfo)
@@ -75,19 +82,23 @@ func (csi *CachedStructInfo) makeOrCopyCachedInfo(
 	field reflect.StructField, fieldIndexes []int, priorityTags []string,
 	cachedFieldInfo *CachedFieldInfo,
 	currTagOrFieldName string,
+	unsafeOffset uintptr,
+	unsafeOffsetAvailable bool,
 ) (newFieldInfo *CachedFieldInfo) {
 	if cachedFieldInfo == nil {
 		// If the field is not cached, it creates a new one.
-		newFieldInfo = csi.makeCachedFieldInfo(field, fieldIndexes, priorityTags)
+		newFieldInfo = csi.makeCachedFieldInfo(field, fieldIndexes, priorityTags, unsafeOffset, unsafeOffsetAvailable)
 		newFieldInfo.IsField = currTagOrFieldName == field.Name
 		return
 	}
 	if cachedFieldInfo.StructField.Type != field.Type {
 		// If the types are different, some information needs to be reset.
-		newFieldInfo = csi.makeCachedFieldInfo(field, fieldIndexes, priorityTags)
+		newFieldInfo = csi.makeCachedFieldInfo(field, fieldIndexes, priorityTags, unsafeOffset, unsafeOffsetAvailable)
 	} else {
 		// If the field types are the same.
-		newFieldInfo = csi.copyCachedInfoWithFieldIndexes(cachedFieldInfo, fieldIndexes)
+		newFieldInfo = csi.copyCachedInfoWithFieldIndexes(
+			cachedFieldInfo, fieldIndexes, unsafeOffset, unsafeOffsetAvailable,
+		)
 	}
 	newFieldInfo.IsField = currTagOrFieldName == field.Name
 	return
@@ -96,18 +107,29 @@ func (csi *CachedStructInfo) makeOrCopyCachedInfo(
 // copyCachedInfoWithFieldIndexes copies and returns a new CachedFieldInfo based on given CachedFieldInfo, but different
 // FieldIndexes. Mainly used for copying fields with the same name and type.
 func (csi *CachedStructInfo) copyCachedInfoWithFieldIndexes(
-	cfi *CachedFieldInfo, fieldIndexes []int,
+	cfi *CachedFieldInfo,
+	fieldIndexes []int,
+	unsafeOffset uintptr,
+	unsafeOffsetAvailable bool,
 ) *CachedFieldInfo {
 	base := CachedFieldInfoBase{}
 	base = *cfi.CachedFieldInfoBase
 	base.FieldIndexes = fieldIndexes
+	base.UnsafeOffset = unsafeOffset
+	base.IsUnsafeDirectlyAssignable = checkTypeIsUnsafeDirectlyAssignable(
+		base.StructField.Type, unsafeOffsetAvailable,
+	)
 	return &CachedFieldInfo{
 		CachedFieldInfoBase: &base,
 	}
 }
 
 func (csi *CachedStructInfo) makeCachedFieldInfo(
-	field reflect.StructField, fieldIndexes []int, priorityTags []string,
+	field reflect.StructField,
+	fieldIndexes []int,
+	priorityTags []string,
+	unsafeOffset uintptr,
+	unsafeOffsetAvailable bool,
 ) *CachedFieldInfo {
 	base := &CachedFieldInfoBase{
 		IsCommonInterface:          checkTypeIsCommonInterface(field),
@@ -117,8 +139,8 @@ func (csi *CachedStructInfo) makeCachedFieldInfo(
 		HasCustomConvert:           csi.checkTypeHasCustomConvert(field.Type),
 		HasCustomAnyConvert:        csi.converter.HasCustomAnyConvertFunc(field.Type),
 		IsDirectlyAssignable:       checkTypeIsDirectlyAssignable(field.Type),
-		UnsafeOffset:               field.Offset,
-		IsUnsafeDirectlyAssignable: checkTypeIsUnsafeDirectlyAssignable(field.Type, fieldIndexes),
+		UnsafeOffset:               unsafeOffset,
+		IsUnsafeDirectlyAssignable: checkTypeIsUnsafeDirectlyAssignable(field.Type, unsafeOffsetAvailable),
 		PriorityTagAndFieldName:    csi.genPriorityTagAndFieldName(field, priorityTags),
 		RemoveSymbolsFieldName:     utils.RemoveSymbols(field.Name),
 	}
@@ -128,8 +150,8 @@ func (csi *CachedStructInfo) makeCachedFieldInfo(
 	}
 }
 
-func checkTypeIsUnsafeDirectlyAssignable(fieldType reflect.Type, fieldIndexes []int) bool {
-	return len(fieldIndexes) == 1 && checkTypeIsDirectlyAssignable(fieldType)
+func checkTypeIsUnsafeDirectlyAssignable(fieldType reflect.Type, unsafeOffsetAvailable bool) bool {
+	return unsafeOffsetAvailable && checkTypeIsDirectlyAssignable(fieldType)
 }
 
 func (csi *CachedStructInfo) genFieldConvertFunc(fieldType reflect.Type) (convertFunc AnyConvertFunc) {

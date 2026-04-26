@@ -24,10 +24,11 @@ func (c *Converter) Bool(anyInput any) (bool, error) {
 	case bool:
 		return value, nil
 	case []byte:
-		if parsed, err := strconv.ParseBool(string(value)); err == nil {
+		s := unsafeBytesToString(value)
+		if parsed, err := strconv.ParseBool(s); err == nil {
 			return parsed, nil
 		}
-		if _, ok := emptyStringMap[strings.ToLower(string(value))]; ok {
+		if _, ok := emptyStringMap[strings.ToLower(s)]; ok {
 			return false, nil
 		}
 		return true, nil

@@ -120,7 +120,7 @@ func (c *Converter) doMapConvert(
 	case string:
 		// If it is a JSON string, automatically unmarshal it!
 		if len(r) > 0 && r[0] == '{' && r[len(r)-1] == '}' {
-			if err = json.UnmarshalUseNumber([]byte(r), &dataMap); err != nil {
+			if err = json.UnmarshalUseNumber(unsafeStringToBytes(r), &dataMap); err != nil {
 				return nil, err
 			}
 		} else {

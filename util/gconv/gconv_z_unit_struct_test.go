@@ -214,6 +214,23 @@ func TestStructDuplicateField(t *testing.T) {
 		t.Assert(dest.Nested2.ID, m["ID"])
 		t.Assert(dest.Nested3.ID, m["ID"])
 	})
+
+	gtest.C(t, func(t *gtest.T) {
+		m := map[string]any{
+			"ID": 100,
+		}
+		type Nested struct {
+			ID int
+		}
+		type Dest struct {
+			*Nested
+		}
+		dest := new(Dest)
+		err := gconv.Struct(m, dest)
+		t.AssertNil(err)
+		t.AssertNE(dest.Nested, nil)
+		t.Assert(dest.ID, m["ID"])
+	})
 }
 
 func TestStructErr(t *testing.T) {
