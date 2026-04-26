@@ -18,6 +18,12 @@ const (
 	defaultMiddlewarePattern = "/*"
 )
 
+var internalMiddlewareServerTracingFuncPointer = reflect.ValueOf(internalMiddlewareServerTracing).Pointer()
+
+func isInternalMiddlewareServerTracing(handler HandlerFunc) bool {
+	return reflect.ValueOf(handler).Pointer() == internalMiddlewareServerTracingFuncPointer
+}
+
 // BindMiddleware registers one or more global middleware to the server.
 // Global middleware can be used standalone without service handler, which intercepts all dynamic requests
 // before or after service handler. The parameter `pattern` specifies what route pattern the middleware intercepts,
@@ -34,8 +40,9 @@ func (s *Server) BindMiddleware(pattern string, handlers ...HandlerFunc) {
 				Type: HandlerTypeMiddleware,
 				Name: gdebug.FuncPath(handler),
 				Info: handlerFuncInfo{
-					Func: handler,
-					Type: reflect.TypeOf(handler),
+					Func:              handler,
+					Type:              reflect.TypeOf(handler),
+					IsInternalTracing: isInternalMiddlewareServerTracing(handler),
 				},
 			},
 		})
@@ -57,8 +64,9 @@ func (s *Server) BindMiddlewareDefault(handlers ...HandlerFunc) {
 				Type: HandlerTypeMiddleware,
 				Name: gdebug.FuncPath(handler),
 				Info: handlerFuncInfo{
-					Func: handler,
-					Type: reflect.TypeOf(handler),
+					Func:              handler,
+					Type:              reflect.TypeOf(handler),
+					IsInternalTracing: isInternalMiddlewareServerTracing(handler),
 				},
 			},
 		})

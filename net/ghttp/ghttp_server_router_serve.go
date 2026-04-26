@@ -82,7 +82,7 @@ func (s *Server) getHandlersWithCache(r *Request) (parsedItems []*HandlerItemPar
 	if value != nil {
 		item := value.Val().(*handlerCacheItem)
 		if item.handlers != nil {
-			return item.parse(path)
+			return item.parse(path, s.config.TracingEnabled)
 		}
 		return item.parsedItems, item.serveItem, item.hasHook, item.hasServe
 	}
@@ -131,6 +131,7 @@ func (s *Server) searchFastHandlers(method, path, domain string) (
 			s.config.RouteComplexEnabled,
 			s.config.RouteComplexEnabled,
 			s.compareRouterPriority,
+			s.config.TracingEnabled,
 		)
 	case defaultRoot == nil:
 		return domainRoot.search(
@@ -140,6 +141,7 @@ func (s *Server) searchFastHandlers(method, path, domain string) (
 			s.config.RouteComplexEnabled,
 			s.config.RouteComplexEnabled,
 			s.compareRouterPriority,
+			s.config.TracingEnabled,
 		)
 	}
 
@@ -162,8 +164,12 @@ func (s *Server) searchFastHandlers(method, path, domain string) (
 			s.config.RouteComplexEnabled,
 			false,
 			s.compareRouterPriority,
+			s.config.TracingEnabled,
 		)
 		for _, item := range domainItems {
+			if shouldSkipHandlerItem(item.Handler, s.config.TracingEnabled) {
+				continue
+			}
 			if seenHandlers.Has(item.Handler.Id) {
 				continue
 			}
@@ -206,6 +212,7 @@ func (n *routeFastNode) search(
 	complexEnabled bool,
 	checkFallback bool,
 	compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+	tracingEnabled bool,
 ) (
 	parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool,
 ) {
@@ -296,6 +303,7 @@ func (n *routeFastNode) search(
 			path,
 			parts,
 			compare,
+			tracingEnabled,
 		)
 	} else {
 		parsedItems, serveItem, hasHook, hasServe = resolveFastCandidates(
@@ -303,6 +311,7 @@ func (n *routeFastNode) search(
 			method,
 			path,
 			parts,
+			tracingEnabled,
 		)
 	}
 	if len(parsedItems) == 0 {
@@ -498,11 +507,23 @@ type routeFastMatchedItem struct {
 	values map[string]string
 }
 
+func newHandlerItemParsed(item *HandlerItem, values map[string]string) *HandlerItemParsed {
+	if len(values) == 0 && item.parsedItem != nil {
+		return item.parsedItem
+	}
+	return &HandlerItemParsed{Handler: item, Values: values}
+}
+
+func shouldSkipHandlerItem(item *HandlerItem, tracingEnabled bool) bool {
+	return !tracingEnabled && item.Info.IsInternalTracing
+}
+
 func resolveFastCandidates(
 	candidates []routeFastCandidate,
 	method string,
 	path string,
 	parts []string,
+	tracingEnabled bool,
 ) (parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool) {
 	var (
 		middlewareCount int
@@ -512,6 +533,9 @@ func resolveFastCandidates(
 	for i := len(candidates) - 1; i >= 0; i-- {
 		candidate := candidates[i]
 		for _, item := range candidate.list {
+			if shouldSkipHandlerItem(item, tracingEnabled) {
+				continue
+			}
 			if seenHandlers.Has(item.Id) {
 				continue
 			}
@@ -532,7 +556,7 @@ func resolveFastCandidates(
 				}
 				itemValues = matchedValues
 			}
-			parsedItem := &HandlerItemParsed{item, itemValues}
+			parsedItem := newHandlerItemParsed(item, itemValues)
 			switch item.Type {
 			case HandlerTypeHandler, HandlerTypeObject:
 				hasServe = true
@@ -566,12 +590,16 @@ func resolveFastCandidatesByPriority(
 	path string,
 	parts []string,
 	compare func(newItem *HandlerItem, oldItem *HandlerItem) bool,
+	tracingEnabled bool,
 ) (parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool) {
 	var seenHandlers routeSearchSeen
 	matchedItems := make([]routeFastMatchedItem, 0, len(candidates))
 	for i := len(candidates) - 1; i >= 0; i-- {
 		candidate := candidates[i]
 		for _, item := range candidate.list {
+			if shouldSkipHandlerItem(item, tracingEnabled) {
+				continue
+			}
 			if seenHandlers.Has(item.Id) {
 				continue
 			}
@@ -603,7 +631,7 @@ func resolveFastCandidatesByPriority(
 				continue
 			}
 		}
-		parsedItem := &HandlerItemParsed{Handler: item, Values: matched.values}
+		parsedItem := newHandlerItemParsed(item, matched.values)
 		switch item.Type {
 		case HandlerTypeHandler, HandlerTypeObject:
 			hasServe = true
@@ -789,7 +817,7 @@ func newHandlerCacheItem(
 	return cacheItem
 }
 
-func (h *handlerCacheItem) parse(path string) (
+func (h *handlerCacheItem) parse(path string, tracingEnabled bool) (
 	parsedItems []*HandlerItemParsed, serveItem *HandlerItemParsed, hasHook, hasServe bool,
 ) {
 	path = normalizeRouterSearchPath(path)
@@ -800,8 +828,11 @@ func (h *handlerCacheItem) parse(path string) (
 	array = splitRouterSearchPath(path, arrayBuffer[:0])
 	parsedItems = make([]*HandlerItemParsed, 0, len(h.handlers))
 	for index, handler := range h.handlers {
+		if shouldSkipHandlerItem(handler, tracingEnabled) {
+			continue
+		}
 		_, values := handler.Router.match(path, array)
-		parsedItem := &HandlerItemParsed{Handler: handler, Values: values}
+		parsedItem := newHandlerItemParsed(handler, values)
 		parsedItems = append(parsedItems, parsedItem)
 		if index == h.serveIndex {
 			serveItem = parsedItem
@@ -876,6 +907,9 @@ func (s *Server) searchHandlers(method, path, domain string) (parsedItems []*Han
 		// As the tail of the list array has the most priority, it iterates the list array from its tail to head.
 		for i := len(lists) - 1; i >= 0; i-- {
 			for _, item := range lists[i] {
+				if shouldSkipHandlerItem(item, s.config.TracingEnabled) {
+					continue
+				}
 				// Filter repeated handler items, especially the middleware and hook handlers.
 				// It is necessary, do not remove this checks logic unless you really know how it is necessary.
 				//
@@ -904,7 +938,7 @@ func (s *Server) searchHandlers(method, path, domain string) (parsedItems []*Han
 				if item.Router.Method == defaultMethod || item.Router.Method == method {
 					// Note the rule having no fuzzy rules: len(match) == 1
 					if matched, values := item.Router.match(path, array); matched {
-						parsedItem := &HandlerItemParsed{item, values}
+						parsedItem := newHandlerItemParsed(item, values)
 						switch item.Type {
 						// The serving handler can be added just once.
 						case HandlerTypeHandler, HandlerTypeObject:

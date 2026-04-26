@@ -7,7 +7,6 @@
 package ghttp
 
 import (
-	"context"
 	"fmt"
 
 	"go.opentelemetry.io/otel"
@@ -18,20 +17,26 @@ import (
 
 	"github.com/gogf/gf/v2"
 	"github.com/gogf/gf/v2/internal/httputil"
+	"github.com/gogf/gf/v2/internal/tracing"
 	"github.com/gogf/gf/v2/net/gtrace"
-	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/util/gconv"
 )
 
 const (
-	instrumentName                              = "github.com/gogf/gf/v2/net/ghttp.Server"
-	tracingEventHttpRequest                     = "http.request"
-	tracingEventHttpRequestHeaders              = "http.request.headers"
-	tracingEventHttpRequestBaggage              = "http.request.baggage"
-	tracingEventHttpResponse                    = "http.response"
-	tracingEventHttpResponseHeaders             = "http.response.headers"
-	tracingEventHttpRequestUrl                  = "http.request.url"
-	tracingMiddlewareHandled        gctx.StrKey = `MiddlewareServerTracingHandled`
+	instrumentName                  = "github.com/gogf/gf/v2/net/ghttp.Server"
+	tracingEventHttpRequest         = "http.request"
+	tracingEventHttpRequestHeaders  = "http.request.headers"
+	tracingEventHttpRequestBaggage  = "http.request.baggage"
+	tracingEventHttpResponse        = "http.response"
+	tracingEventHttpResponseHeaders = "http.response.headers"
+	tracingEventHttpRequestUrl      = "http.request.url"
+)
+
+var (
+	tracingInstrumentationVersion = trace.WithInstrumentationVersion(gf.VERSION)
+	tracingSpanKindServer         = trace.WithSpanKind(trace.SpanKindServer)
+	tracingCommonLabels           = gtrace.CommonLabels()
+	tracingTraceContext           = propagation.TraceContext{}
 )
 
 // internalMiddlewareServerTracing is a serer middleware that enables tracing feature using standards of OpenTelemetry.
@@ -39,19 +44,39 @@ func internalMiddlewareServerTracing(r *Request) {
 	var (
 		ctx = r.Context()
 	)
+	if !r.Server.config.TracingEnabled {
+		r.Middleware.Next()
+		return
+	}
 	// Mark this request is handled by server tracing middleware,
 	// to avoid repeated handling by the same middleware.
-	if ctx.Value(tracingMiddlewareHandled) != nil {
+	if r.tracingHandled {
 		r.Middleware.Next()
 		return
 	}
 
-	ctx = context.WithValue(ctx, tracingMiddlewareHandled, 1)
+	r.tracingHandled = true
+	if gtrace.IsUsingDefaultProvider() {
+		ctx = tracingTraceContext.Extract(ctx, propagation.HeaderCarrier(r.Header))
+		spanCtx := trace.SpanContextFromContext(ctx)
+		if !spanCtx.IsValid() {
+			traceID, spanID := tracing.NewIDs()
+			spanCtx = trace.NewSpanContext(trace.SpanContextConfig{
+				TraceID: traceID,
+				SpanID:  spanID,
+			})
+			ctx = trace.ContextWithRemoteSpanContext(ctx, spanCtx)
+		}
+		r.SetCtx(ctx)
+		r.Middleware.Next()
+		return
+	}
+
 	var (
 		span trace.Span
 		tr   = otel.GetTracerProvider().Tracer(
 			instrumentName,
-			trace.WithInstrumentationVersion(gf.VERSION),
+			tracingInstrumentationVersion,
 		)
 	)
 	ctx, span = tr.Start(
@@ -60,20 +85,14 @@ func internalMiddlewareServerTracing(r *Request) {
 			propagation.HeaderCarrier(r.Header),
 		),
 		r.URL.Path,
-		trace.WithSpanKind(trace.SpanKindServer),
+		tracingSpanKindServer,
 	)
 	defer span.End()
-
-	span.SetAttributes(gtrace.CommonLabels()...)
 
 	// Inject tracing context.
 	r.SetCtx(ctx)
 
-	// If it is now using a default trace provider, it then does no complex tracing jobs.
-	if gtrace.IsUsingDefaultProvider() {
-		r.Middleware.Next()
-		return
-	}
+	span.SetAttributes(tracingCommonLabels...)
 
 	span.AddEvent(tracingEventHttpRequest, trace.WithAttributes(
 		attribute.String(tracingEventHttpRequestUrl, r.URL.String()),

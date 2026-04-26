@@ -8,6 +8,7 @@ package ghttp
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gogf/gf/v2/container/gvar"
 	"github.com/gogf/gf/v2/util/gconv"
@@ -47,6 +48,69 @@ func (r *Request) GetQuery(key string, def ...any) *gvar.Var {
 		return gvar.New(def[0])
 	}
 	return nil
+}
+
+// GetQueryString retrieves and returns the query value with given key name `key` as string.
+// It returns `def` if `key` does not exist.
+func (r *Request) GetQueryString(key string, def ...string) string {
+	if r.parsedQuery {
+		if len(r.queryMap) > 0 {
+			if value, ok := r.queryMap[key]; ok {
+				return gconv.String(value)
+			}
+		}
+	} else if r.URL.RawQuery != "" {
+		if value, found, fallback := getRawQueryStringFast(r.URL.RawQuery, key); !fallback {
+			if found {
+				return value
+			}
+		} else {
+			r.parseQuery()
+			if len(r.queryMap) > 0 {
+				if value, ok := r.queryMap[key]; ok {
+					return gconv.String(value)
+				}
+			}
+		}
+	}
+	if r.Method == http.MethodGet {
+		r.parseBody()
+	}
+	if len(r.bodyMap) > 0 {
+		if value, ok := r.bodyMap[key]; ok {
+			return gconv.String(value)
+		}
+	}
+	if len(def) > 0 {
+		return def[0]
+	}
+	return ""
+}
+
+func getRawQueryStringFast(rawQuery string, key string) (value string, found bool, fallback bool) {
+	for start := 0; start <= len(rawQuery); {
+		end := strings.IndexByte(rawQuery[start:], '&')
+		if end < 0 {
+			end = len(rawQuery)
+		} else {
+			end += start
+		}
+		part := rawQuery[start:end]
+		start = end + 1
+		pos := strings.IndexByte(part, '=')
+		if pos <= 0 {
+			continue
+		}
+		rawKey := part[:pos]
+		if strings.ContainsAny(rawKey, " .[%+") || strings.ContainsAny(part[pos+1:], "%+") {
+			return "", false, true
+		}
+		if rawKey == key {
+			value = part[pos+1:]
+			found = true
+		}
+	}
+	return value, found, false
 }
 
 // GetQueryMap retrieves and returns all parameters passed from the client using HTTP GET method

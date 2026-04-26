@@ -143,6 +143,9 @@ func (r *Request) doParse(pointer any, requestType int) error {
 }
 
 func (r *Request) parseStrictRouteRequest(pointer any) error {
+	if ok, err := r.bindStrictRouteRequestFast(pointer); ok || err != nil {
+		return err
+	}
 	if r.shouldUseCustomRequestParser() {
 		// Custom Parse only replaces parameter assignment; validation remains owned by ghttp.
 		parser, ok := pointer.(RequestParser)
@@ -152,6 +155,9 @@ func (r *Request) parseStrictRouteRequest(pointer any) error {
 				`invalid request parser: "%T" does not implement ghttp.RequestParser`,
 				pointer,
 			)
+		}
+		if !r.shouldValidateParsedStruct() {
+			return parser.Parse(r)
 		}
 		assoc, err := r.prepareParsedStructData(pointer, parseTypeRequest)
 		if err != nil {

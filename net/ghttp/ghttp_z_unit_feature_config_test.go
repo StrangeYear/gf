@@ -34,6 +34,7 @@ func Test_ConfigFromMap(t *testing.T) {
 			"cookieSameSite":  "lax",
 			"cookieSecure":    true,
 			"cookieHttpOnly":  true,
+			"tracingEnabled":  false,
 		}
 		config, err := ghttp.ConfigFromMap(m)
 		t.AssertNil(err)
@@ -47,6 +48,7 @@ func Test_ConfigFromMap(t *testing.T) {
 		t.Assert(config.CookieSameSite, m["cookieSameSite"])
 		t.Assert(config.CookieSecure, m["cookieSecure"])
 		t.Assert(config.CookieHttpOnly, m["cookieHttpOnly"])
+		t.Assert(config.TracingEnabled, m["tracingEnabled"])
 	})
 }
 
@@ -66,6 +68,7 @@ func Test_SetConfigWithMap(t *testing.T) {
 			"cookieSameSite":   "lax",
 			"cookieSecure":     true,
 			"cookieHttpOnly":   true,
+			"TracingEnabled":   false,
 		}
 		s := g.Server()
 		err := s.SetConfigWithMap(m)

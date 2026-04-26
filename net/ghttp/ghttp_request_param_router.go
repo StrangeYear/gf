@@ -33,3 +33,17 @@ func (r *Request) GetRouter(key string, def ...any) *gvar.Var {
 	}
 	return nil
 }
+
+// GetRouterString retrieves and returns the router value with given key name `key` as string.
+// It returns `def` if `key` does not exist.
+func (r *Request) GetRouterString(key string, def ...string) string {
+	if r.routerMap != nil {
+		if v, ok := r.routerMap[key]; ok {
+			return v
+		}
+	}
+	if len(def) > 0 {
+		return def[0]
+	}
+	return ""
+}

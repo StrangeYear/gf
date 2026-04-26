@@ -247,6 +247,7 @@ func (s *Server) doSetHandler(
 	}
 	handler.Router.RegRule, handler.Router.RegNames = s.patternToRegular(uri)
 	handler.Router.matcher = newRouteMatcher(uri)
+	handler.parsedItem = &HandlerItemParsed{Handler: handler}
 
 	if _, ok := s.serveTree[domain]; !ok {
 		s.serveTree[domain] = &routeTreeNode{}

@@ -366,6 +366,7 @@ func (s *Server) buildStrictRequestInfo(
 		return err
 	}
 	funcInfo.ReqStructHasParseTag = funcInfo.ReqStructParseMeta != nil && funcInfo.ReqStructParseMeta.HasParseTag
+	funcInfo.ReqStructFastBindMeta = buildStrictRequestFastBindMeta(funcInfo)
 	return nil
 }
 

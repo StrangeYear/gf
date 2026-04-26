@@ -227,6 +227,12 @@ type ServerConfig struct {
 	PProfPattern string `json:"pprofPattern"` // PProfPattern specifies the PProf service pattern for router.
 
 	// ======================================================================================================
+	// Tracing.
+	// ======================================================================================================
+
+	TracingEnabled bool `json:"tracingEnabled"` // TracingEnabled enables OpenTelemetry tracing middleware.
+
+	// ======================================================================================================
 	// API & Swagger.
 	// ======================================================================================================
 
@@ -317,6 +323,7 @@ func NewConfig() ServerConfig {
 		ErrorLogPattern:         "error-{Ymd}.log",
 		AccessLogEnabled:        false,
 		AccessLogPattern:        "access-{Ymd}.log",
+		TracingEnabled:          true,
 		RouteComplexEnabled:     true,
 		DumpRouterMap:           true,
 		ClientMaxBodySize:       8 * 1024 * 1024, // 8MB
@@ -368,6 +375,7 @@ func (s *Server) SetConfigWithMap(m map[string]any) error {
 
 // SetConfig sets the configuration for the server.
 func (s *Server) SetConfig(c ServerConfig) error {
+	oldTracingEnabled := s.config.TracingEnabled
 	s.config = c
 	// Automatically add ':' prefix for address if it is missed.
 	if s.config.Address != "" && !gstr.Contains(s.config.Address, ":") {
@@ -400,6 +408,9 @@ func (s *Server) SetConfig(c ServerConfig) error {
 		}
 	}
 	gracefulEnabled = c.Graceful
+	if oldTracingEnabled != s.config.TracingEnabled {
+		s.clearServeCache(context.TODO())
+	}
 	intlog.Printf(context.TODO(), "SetConfig: %+v", s.config)
 	return nil
 }

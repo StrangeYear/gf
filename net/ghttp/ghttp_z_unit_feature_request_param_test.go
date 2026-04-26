@@ -66,6 +66,34 @@ func Test_ParamsTagIn(t *testing.T) {
 	})
 }
 
+func Test_ParamsStringGetters(t *testing.T) {
+	s := g.Server(guid.S())
+	s.BindHandler("/param/:id", func(r *ghttp.Request) {
+		r.Response.Write(
+			r.GetRouterString("id") + ":" +
+				r.GetQueryString("filter") + ":" +
+				r.GetQueryString("name") + ":" +
+				r.GetQueryString("missing", "default"),
+		)
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+
+	gtest.C(t, func(t *gtest.T) {
+		prefix := fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort())
+		client := g.Client()
+		client.SetPrefix(prefix)
+
+		t.Assert(
+			client.GetContent(ctx, "/param/123?filter=old&filter=paid&name=foo%20bar"),
+			"123:paid:foo bar:default",
+		)
+	})
+}
+
 type UserTagDefaultReq struct {
 	g.Meta   `path:"/user-default" method:"post,get" summary:"user default tag api"`
 	Id       int     `v:"required" d:"1"`

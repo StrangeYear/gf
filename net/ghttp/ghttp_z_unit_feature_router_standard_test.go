@@ -93,6 +93,39 @@ func Test_Router_Handler_Standard_StrictHandler(t *testing.T) {
 	})
 }
 
+type TestStrictHandlerFastBindReq struct {
+	g.Meta `path:"/strict-handler-fast-bind/:id" method:"get"`
+	ID     string `json:"idAlias" in:"path"`
+	Filter string `json:"filterAlias" in:"query"`
+}
+
+type TestStrictHandlerFastBindRes struct {
+	ID     string `json:"id"`
+	Filter string `json:"filter"`
+}
+
+func Test_Router_Handler_Standard_StrictHandlerFastBindFieldNameFallback(t *testing.T) {
+	s := g.Server(guid.S())
+	s.Use(ghttp.MiddlewareHandlerResponse)
+	s.SetRouteComplexEnabled(false)
+	s.BindStrictHandler(ghttp.NewStrictHandler(func(
+		ctx context.Context, req *TestStrictHandlerFastBindReq,
+	) (res *TestStrictHandlerFastBindRes, err error) {
+		return &TestStrictHandlerFastBindRes{ID: req.ID, Filter: req.Filter}, nil
+	}))
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(client.GetContent(ctx, "/strict-handler-fast-bind/123?filter=paid"), `{"code":0,"message":"OK","data":{"id":"123","filter":"paid"}}`)
+	})
+}
+
 type TestStrictCustomParseReq struct {
 	Name string `v:"required"`
 }

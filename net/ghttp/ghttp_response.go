@@ -46,6 +46,10 @@ func newResponse(s *Server, w http.ResponseWriter) *Response {
 	return r
 }
 
+func setResponseHeader(header http.Header, key, value string) {
+	header[key] = []string{value}
+}
+
 func releaseResponse(r *Response) {
 	if r == nil {
 		return
@@ -150,9 +154,9 @@ func (r *Response) ServeContent(name string, modTime time.Time, content io.ReadS
 
 // Flush outputs the buffer content to the client and clears the buffer.
 func (r *Response) Flush() {
-	r.Header().Set(responseHeaderTraceID, gtrace.GetTraceID(r.Request.Context()))
+	setResponseHeader(r.Header(), responseHeaderTraceID, gtrace.GetTraceID(r.Request.Context()))
 	if r.Server.config.ServerAgent != "" {
-		r.Header().Set("Server", r.Server.config.ServerAgent)
+		setResponseHeader(r.Header(), "Server", r.Server.config.ServerAgent)
 	}
 	r.BufferWriter.Flush()
 }

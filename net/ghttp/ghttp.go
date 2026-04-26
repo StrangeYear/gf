@@ -83,6 +83,7 @@ type (
 		Func                     HandlerFunc                // Handler function address.
 		Type                     reflect.Type               // Reflect type information for current handler, which is used for extensions of the handler feature.
 		Value                    reflect.Value              // Reflect value information for current handler, which is used for extensions of the handler feature.
+		IsInternalTracing        bool                       // Marks the built-in tracing middleware for config-controlled skipping.
 		IsStrictRoute            bool                       // Whether strict route matching is enabled.
 		ReqStructType            reflect.Type               // Cached request struct type for object-style handlers.
 		ReqStructPool            *sync.Pool                 // Optional request struct pool for explicitly enabled strict handlers.
@@ -93,6 +94,7 @@ type (
 		ReqStructHasCustomParser bool                       // Whether the request struct implements RequestParser.
 		ReqStructHasParseTag     bool                       // Whether request struct has parse tag definitions.
 		ReqStructParseMeta       *parseStructMeta           // Request struct parse metadata.
+		ReqStructFastBindMeta    *strictRequestFastBindMeta // Cached fast-path request binding metadata for simple strict routes.
 	}
 
 	// HandlerItem is the registered handler for route handling,
@@ -111,6 +113,7 @@ type (
 		HookName   HookName        // Hook type name, only available for the hook type.
 		Router     *Router         // Router object.
 		Source     string          // Registering source file `path:line`.
+		parsedItem *HandlerItemParsed
 	}
 
 	// HandlerItemParsed is the item parsed from URL.Path.
