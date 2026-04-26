@@ -83,6 +83,10 @@ type ServerConfig struct {
 	// Handler the handler for HTTP request.
 	Handler func(w http.ResponseWriter, r *http.Request) `json:"-"`
 
+	// WebSocketCheckOrigin optionally checks whether a WebSocket upgrade request is allowed.
+	// It is compatible by default; set it when applications need stricter Origin validation.
+	WebSocketCheckOrigin func(r *http.Request) bool `json:"-"`
+
 	// ReadTimeout is the maximum duration for reading the entire
 	// request, including the body.
 	//

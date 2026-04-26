@@ -181,7 +181,11 @@ func releasePooledRequestStruct(request *Request) {
 //
 // Deprecated: will be removed in the future, please use third-party websocket library instead.
 func (r *Request) WebSocket() (*WebSocket, error) {
-	if conn, err := wsUpGrader.Upgrade(r.Response.Writer, r.Request, nil); err == nil {
+	upgrader := wsUpGrader
+	if r.Server != nil && r.Server.config.WebSocketCheckOrigin != nil {
+		upgrader.CheckOrigin = r.Server.config.WebSocketCheckOrigin
+	}
+	if conn, err := upgrader.Upgrade(r.Response.Writer, r.Request, nil); err == nil {
 		return &WebSocket{
 			conn,
 		}, nil

@@ -8,6 +8,7 @@ package ghttp_test
 
 import (
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -56,5 +57,37 @@ func Test_WebSocket(t *testing.T) {
 		t.AssertNil(err)
 		t.Assert(mt, websocket.TextMessage)
 		t.Assert(data, msg)
+	})
+}
+
+func Test_WebSocket_CheckOrigin(t *testing.T) {
+	s := g.Server(guid.S())
+	s.SetWebSocketCheckOrigin(func(r *http.Request) bool {
+		return r.Header.Get("Origin") == "https://allowed.example"
+	})
+	s.BindHandler("/ws-origin", func(r *ghttp.Request) {
+		ws, err := r.WebSocket()
+		if err != nil {
+			r.Exit()
+		}
+		_ = ws.Close()
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		url := fmt.Sprintf("ws://127.0.0.1:%d/ws-origin", s.GetListenedPort())
+		_, _, err := websocket.DefaultDialer.Dial(url, http.Header{
+			"Origin": []string{"https://blocked.example"},
+		})
+		t.AssertNE(err, nil)
+
+		conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{
+			"Origin": []string{"https://allowed.example"},
+		})
+		t.AssertNil(err)
+		_ = conn.Close()
 	})
 }
