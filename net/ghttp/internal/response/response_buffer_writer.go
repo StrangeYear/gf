@@ -25,6 +25,8 @@ var bufferWriterPool = sync.Pool{
 	},
 }
 
+const maxPooledResponseBufferCapacity = 256 * 1024
+
 // BufferWriter is the custom writer for http response with buffer.
 type BufferWriter struct {
 	*Writer               // The underlying BufferWriter.
@@ -88,8 +90,7 @@ func (w *BufferWriter) Close() {
 		return
 	}
 	if w.buffer != nil {
-		w.buffer.Reset()
-		bufferPool.Put(w.buffer)
+		putResponseBuffer(w.buffer)
 		w.buffer = nil
 	}
 	if w.Writer != nil {
@@ -99,6 +100,15 @@ func (w *BufferWriter) Close() {
 	// BufferWriter itself is request-scoped; reset it so pooled instances never retain response state.
 	w.Status = 0
 	bufferWriterPool.Put(w)
+}
+
+func putResponseBuffer(buffer *bytes.Buffer) bool {
+	if buffer.Cap() > maxPooledResponseBufferCapacity {
+		return false
+	}
+	buffer.Reset()
+	bufferPool.Put(buffer)
+	return true
 }
 
 // WriteHeader implements the interface of http.BufferWriter.WriteHeader.

@@ -11,6 +11,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -26,6 +27,8 @@ var gzipWriterPool = sync.Pool{
 		return gzip.NewWriter(io.Discard)
 	},
 }
+
+const maxPooledGzipBufferCapacity = 256 * 1024
 
 // MiddlewareGzip is a middleware that compresses HTTP response using gzip compression.
 // Note that it does not compress responses if:
@@ -71,8 +74,7 @@ func MiddlewareGzip(r *Request) {
 	defer func() {
 		gzipWriter.Reset(io.Discard)
 		gzipWriterPool.Put(gzipWriter)
-		compressed.Reset()
-		gzipCompressBufferPool.Put(compressed)
+		putGzipCompressBuffer(compressed)
 	}()
 	if _, err := gzipWriter.Write(buffer); err != nil {
 		logger.Warningf(ctx, "gzip compression failed: %+v", err)
@@ -92,7 +94,45 @@ func MiddlewareGzip(r *Request) {
 	r.Response.Write(compressed.Bytes())
 }
 
+func putGzipCompressBuffer(buffer *bytes.Buffer) bool {
+	if buffer.Cap() > maxPooledGzipBufferCapacity {
+		return false
+	}
+	buffer.Reset()
+	gzipCompressBufferPool.Put(buffer)
+	return true
+}
+
 // acceptsGzip returns true if the client accepts gzip compression.
 func acceptsGzip(r *http.Request) bool {
-	return strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+	for _, headerValue := range r.Header.Values("Accept-Encoding") {
+		for len(headerValue) > 0 {
+			var encoding string
+			encoding, headerValue, _ = strings.Cut(headerValue, ",")
+			if acceptsGzipEncoding(encoding) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func acceptsGzipEncoding(encoding string) bool {
+	token, params, _ := strings.Cut(strings.TrimSpace(encoding), ";")
+	if !strings.EqualFold(strings.TrimSpace(token), "gzip") {
+		return false
+	}
+	for len(params) > 0 {
+		var param string
+		param, params, _ = strings.Cut(params, ";")
+		key, value, found := strings.Cut(strings.TrimSpace(param), "=")
+		if !found || !strings.EqualFold(strings.TrimSpace(key), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.Trim(strings.TrimSpace(value), `"`), 64)
+		if err == nil && q <= 0 {
+			return false
+		}
+	}
+	return true
 }

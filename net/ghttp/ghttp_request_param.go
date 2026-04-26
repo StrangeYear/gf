@@ -419,7 +419,7 @@ func (r *Request) parseForm() {
 		}
 		if len(r.PostForm) > 0 {
 			// Parse the form data using united parsing way.
-			params := ""
+			paramsBuilder := strings.Builder{}
 			for name, values := range r.PostForm {
 				// Invalid parameter name.
 				// Only allow chars of: '\w', '[', ']', '-'.
@@ -428,34 +428,25 @@ func (r *Request) parseForm() {
 					if s := gstr.Trim(name + strings.Join(values, " ")); len(s) > 0 {
 						if s[0] == '{' && s[len(s)-1] == '}' || s[0] == '<' && s[len(s)-1] == '>' {
 							r.bodyContent = []byte(s)
-							params = ""
+							paramsBuilder.Reset()
 							break
 						}
 					}
 				}
 				if len(values) == 1 {
-					if len(params) > 0 {
-						params += "&"
-					}
-					params += name + "=" + gurl.Encode(values[0])
+					appendFormParam(&paramsBuilder, name, values[0])
 				} else {
 					if len(name) > 2 && name[len(name)-2:] == "[]" {
 						name = name[:len(name)-2]
 						for _, v := range values {
-							if len(params) > 0 {
-								params += "&"
-							}
-							params += name + "[]=" + gurl.Encode(v)
+							appendFormParam(&paramsBuilder, name+"[]", v)
 						}
 					} else {
-						if len(params) > 0 {
-							params += "&"
-						}
-						params += name + "=" + gurl.Encode(values[len(values)-1])
+						appendFormParam(&paramsBuilder, name, values[len(values)-1])
 					}
 				}
 			}
-			if params != "" {
+			if params := paramsBuilder.String(); params != "" {
 				if r.formMap, err = gstr.Parse(params); err != nil {
 					panic(gerror.WrapCode(gcode.CodeInvalidParameter, err, "Parse request parameters failed"))
 				}
@@ -476,6 +467,15 @@ func (r *Request) parseForm() {
 func (r *Request) hasFormContentType() bool {
 	contentType := r.Header.Get("Content-Type")
 	return contentType != "" && (gstr.Contains(contentType, "multipart/") || gstr.Contains(contentType, "form"))
+}
+
+func appendFormParam(builder *strings.Builder, name, value string) {
+	if builder.Len() > 0 {
+		builder.WriteByte('&')
+	}
+	builder.WriteString(name)
+	builder.WriteByte('=')
+	builder.WriteString(gurl.Encode(value))
 }
 
 // GetMultipartForm parses and returns the form as multipart forms.
