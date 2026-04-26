@@ -873,6 +873,24 @@ func Test_Params_GetRequestMapStrVar(t *testing.T) {
 	})
 }
 
+func Test_Params_BlankBodyDoesNotPanic(t *testing.T) {
+	s := g.Server(guid.S())
+	s.BindHandler("/blank-body", func(r *ghttp.Request) {
+		r.GetRequestMap()
+		r.Response.Write("ok")
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		t.Assert(client.PostContent(ctx, "/blank-body", " \n\t "), "ok")
+	})
+}
+
 type GetMetaTagReq struct {
 	g.Meta `path:"/test" method:"post" summary:"meta_tag" tags:"meta"`
 	Name   string

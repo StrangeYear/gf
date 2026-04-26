@@ -110,7 +110,7 @@ func (r *Request) prepareFormStructData(pointer any, mapping ...map[string]strin
 		data = map[string]any{}
 	}
 	if err = r.mergeDefaultStructValue(data, pointer); err != nil {
-		return data, nil
+		return data, err
 	}
 	if err = r.doParseRequestData(data, pointer, mapping...); err != nil {
 		return data, err

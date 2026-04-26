@@ -207,12 +207,12 @@ func (r *Request) prepareRequestStructData(pointer any, mapping ...map[string]st
 
 	// `in` Tag Struct values.
 	if err = r.mergeInTagStructValue(data); err != nil {
-		return data, nil
+		return data, err
 	}
 
 	// Default struct values.
 	if err = r.mergeDefaultStructValue(data, pointer); err != nil {
-		return data, nil
+		return data, err
 	}
 
 	if err = r.doParseRequestData(data, pointer, mapping...); err != nil {
@@ -256,34 +256,62 @@ func (r *Request) mergeInTagStructValue(data map[string]any) error {
 		return nil
 	}
 	var (
-		headerMap = make(map[string]any)
-		cookieMap = make(map[string]any)
+		headerMap map[string]any
+		cookieMap map[string]any
 	)
-	for k, v := range r.Header {
-		if len(v) > 0 {
-			headerMap[k] = v[0]
-		}
-	}
-	for _, cookie := range r.Cookies() {
-		cookieMap[cookie.Name] = cookie.Value
-	}
 	for _, field := range fields {
 		var (
 			foundKey   string
 			foundValue any
+			found      bool
 		)
 		switch field.in {
 		case goai.ParameterInHeader:
-			foundKey, foundValue = gutil.MapPossibleItemByKey(headerMap, field.findKey)
+			foundKey, foundValue, found = r.findHeaderInTagValue(field.findKey, &headerMap)
 
 		case goai.ParameterInCookie:
-			foundKey, foundValue = gutil.MapPossibleItemByKey(cookieMap, field.findKey)
+			foundKey, foundValue, found = r.findCookieInTagValue(field.findKey, &cookieMap)
 		}
-		if foundKey != "" {
+		if found {
 			mergeTagValueWithFoundKey(data, true, foundKey, field.fieldName, foundValue)
 		}
 	}
 	return nil
+}
+
+func (r *Request) findHeaderInTagValue(
+	findKey string, headerMap *map[string]any,
+) (foundKey string, foundValue any, found bool) {
+	if values := r.Header.Values(findKey); len(values) > 0 {
+		return findKey, values[0], true
+	}
+	if *headerMap == nil {
+		*headerMap = make(map[string]any, len(r.Header))
+		for k, v := range r.Header {
+			if len(v) > 0 {
+				(*headerMap)[k] = v[0]
+			}
+		}
+	}
+	foundKey, foundValue = gutil.MapPossibleItemByKey(*headerMap, findKey)
+	return foundKey, foundValue, foundKey != ""
+}
+
+func (r *Request) findCookieInTagValue(
+	findKey string, cookieMap *map[string]any,
+) (foundKey string, foundValue any, found bool) {
+	if cookie, err := r.Request.Cookie(findKey); err == nil {
+		return findKey, cookie.Value, true
+	}
+	if *cookieMap == nil {
+		cookies := r.Cookies()
+		*cookieMap = make(map[string]any, len(cookies))
+		for _, cookie := range cookies {
+			(*cookieMap)[cookie.Name] = cookie.Value
+		}
+	}
+	foundKey, foundValue = gutil.MapPossibleItemByKey(*cookieMap, findKey)
+	return foundKey, foundValue, foundKey != ""
 }
 
 func buildRequestStructTagMeta(fields []gstructs.Field) (

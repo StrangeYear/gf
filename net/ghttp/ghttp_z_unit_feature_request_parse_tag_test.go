@@ -9,6 +9,7 @@ package ghttp_test
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +127,47 @@ func Test_Params_ParseTag_CustomRuleAndServiceBinding(t *testing.T) {
 				"name": "  john  ",
 			}),
 			`{"code":0,"message":"OK","data":{"name":"[john:ok]"}}`,
+		)
+	})
+}
+
+func Test_Params_ParseTag_ForeachUsesElementFieldType(t *testing.T) {
+	ghttp.RegisterParseRule("assert-string-element", func(ctx context.Context, in ghttp.ParseFuncInput) (any, error) {
+		if in.FieldType.Kind() != reflect.String {
+			return nil, fmt.Errorf(`unexpected field type: %s`, in.FieldType.String())
+		}
+		value, ok := in.Value.(string)
+		if !ok {
+			return in.Value, nil
+		}
+		return strings.TrimSpace(value), nil
+	})
+	defer ghttp.DeleteParseRule("assert-string-element")
+
+	type Req struct {
+		Tags []string `json:"tags" parse:"foreach|assert-string-element"`
+	}
+	s := g.Server(guid.S())
+	s.BindHandler("/parse-tag-foreach-type", func(r *ghttp.Request) {
+		var req *Req
+		if err := r.Parse(&req); err != nil {
+			r.Response.WriteExit(err)
+		}
+		r.Response.WriteJsonExit(req)
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		t.Assert(
+			client.ContentJson().PostContent(ctx, "/parse-tag-foreach-type", g.Map{
+				"tags": []string{" a ", " b "},
+			}),
+			`{"tags":["a","b"]}`,
 		)
 	})
 }

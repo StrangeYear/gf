@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gogf/gf/v2/errors/gcode"
 	"github.com/gogf/gf/v2/errors/gerror"
@@ -81,9 +82,10 @@ type parseFieldMeta struct {
 var (
 	// customParseFuncMap stores the custom parse functions.
 	// map[Rule]ParseFunc
-	customParseFuncMu    sync.RWMutex
-	customParseFuncMap   = make(map[string]ParseFunc)
-	parseStructMetaCache sync.Map
+	customParseFuncMu          sync.Mutex
+	customParseFuncMap         = make(map[string]ParseFunc)
+	customParseFuncMapSnapshot atomic.Value
+	parseStructMetaCache       sync.Map
 )
 
 func init() {
@@ -120,6 +122,7 @@ func RegisterParseRule(rule string, f ParseFunc) {
 		})
 	}
 	customParseFuncMap[rule] = f
+	storeCustomParseFuncMapSnapshotLocked()
 }
 
 // RegisterParseRuleByMap registers custom parse rules using map for package.
@@ -129,17 +132,17 @@ func RegisterParseRuleByMap(m map[string]ParseFunc) {
 	for k, v := range m {
 		customParseFuncMap[k] = v
 	}
+	storeCustomParseFuncMapSnapshotLocked()
 }
 
 // GetRegisteredParseRuleMap returns all the custom registered parse rules and associated functions.
 func GetRegisteredParseRuleMap() map[string]ParseFunc {
-	customParseFuncMu.RLock()
-	defer customParseFuncMu.RUnlock()
-	if len(customParseFuncMap) == 0 {
+	ruleMapSnapshot, _ := customParseFuncMapSnapshot.Load().(map[string]ParseFunc)
+	if len(ruleMapSnapshot) == 0 {
 		return nil
 	}
-	ruleMap := make(map[string]ParseFunc)
-	for k, v := range customParseFuncMap {
+	ruleMap := make(map[string]ParseFunc, len(ruleMapSnapshot))
+	for k, v := range ruleMapSnapshot {
 		ruleMap[k] = v
 	}
 	return ruleMap
@@ -152,6 +155,15 @@ func DeleteParseRule(rules ...string) {
 	for _, rule := range rules {
 		delete(customParseFuncMap, rule)
 	}
+	storeCustomParseFuncMapSnapshotLocked()
+}
+
+func storeCustomParseFuncMapSnapshotLocked() {
+	ruleMap := make(map[string]ParseFunc, len(customParseFuncMap))
+	for k, v := range customParseFuncMap {
+		ruleMap[k] = v
+	}
+	customParseFuncMapSnapshot.Store(ruleMap)
 }
 
 func (r *Request) doParseRequestData(data map[string]any, pointer any, mapping ...map[string]string) error {
@@ -292,10 +304,10 @@ func (r *Request) doParseRuleItems(
 }
 
 func getCustomParseFunc(rule string) ParseFunc {
-	customParseFuncMu.RLock()
-	parseFunc := customParseFuncMap[rule]
-	customParseFuncMu.RUnlock()
-	return parseFunc
+	if ruleMap, ok := customParseFuncMapSnapshot.Load().(map[string]ParseFunc); ok {
+		return ruleMap[rule]
+	}
+	return nil
 }
 
 func (r *Request) doParseForeachRule(
@@ -314,13 +326,14 @@ func (r *Request) doParseForeachRule(
 		)
 	}
 	parsedValues := make([]any, reflectValue.Len())
+	itemFieldType := getParseForeachElementType(fieldMeta.FieldType)
 	for i := 0; i < reflectValue.Len(); i++ {
 		parsedItem, err := r.doParseRuleItems(
 			reflectValue.Index(i).Interface(),
 			data,
 			parseFieldMeta{
 				Name:       fieldMeta.Name,
-				FieldType:  fieldMeta.FieldType,
+				FieldType:  itemFieldType,
 				ParseRules: rules,
 			},
 			fmt.Sprintf("%s[%d]", fieldPath, i),
@@ -331,6 +344,19 @@ func (r *Request) doParseForeachRule(
 		parsedValues[i] = parsedItem
 	}
 	return rebuildParsedArrayValue(value, parsedValues)
+}
+
+func getParseForeachElementType(fieldType reflect.Type) reflect.Type {
+	indirectType := indirectToType(fieldType)
+	if indirectType == nil {
+		return fieldType
+	}
+	switch indirectType.Kind() {
+	case reflect.Slice, reflect.Array:
+		return indirectType.Elem()
+	default:
+		return fieldType
+	}
 }
 
 func parseRuleItems(tagValue string) ([]parseRuleItem, error) {

@@ -37,6 +37,15 @@ func Test_Params_Parse(t *testing.T) {
 		err := r.Parse(user)
 		r.Response.WriteExit(err != nil)
 	})
+	s.BindHandler("/parseUnsupported", func(r *ghttp.Request) {
+		var user map[string]any
+		err := r.Parse(&user)
+		r.Response.WriteExit(err != nil)
+	})
+	s.BindHandler("/parseNil", func(r *ghttp.Request) {
+		err := r.Parse(nil)
+		r.Response.WriteExit(err != nil)
+	})
 	s.SetDumpRouterMap(false)
 	s.Start()
 	defer s.Shutdown()
@@ -47,6 +56,8 @@ func Test_Params_Parse(t *testing.T) {
 		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
 		t.Assert(client.PostContent(ctx, "/parse", `{"id":1,"name":"john","map":{"id":1,"score":100}}`), `1100`)
 		t.Assert(client.PostContent(ctx, "/parseErr", `{"id":1,"name":"john","map":{"id":1,"score":100}}`), true)
+		t.Assert(client.PostContent(ctx, "/parseUnsupported", `{"id":1}`), true)
+		t.Assert(client.PostContent(ctx, "/parseNil", `{"id":1}`), true)
 	})
 }
 

@@ -77,6 +77,12 @@ func (r *Request) ParseForm(pointer any) error {
 
 // doParse parses the request data to struct/structs according to request type.
 func (r *Request) doParse(pointer any, requestType int) error {
+	if pointer == nil {
+		return gerror.NewCode(
+			gcode.CodeInvalidParameter,
+			`invalid parameter type "<nil>", of which kind should be of *struct/**struct/*[]struct/*[]*struct`,
+		)
+	}
 	var (
 		reflectVal1  = reflect.ValueOf(pointer)
 		reflectKind1 = reflectVal1.Kind()
@@ -87,6 +93,13 @@ func (r *Request) doParse(pointer any, requestType int) error {
 			`invalid parameter type "%v", of which kind should be of *struct/**struct/*[]struct/*[]*struct, but got: "%v"`,
 			reflectVal1.Type(),
 			reflectKind1,
+		)
+	}
+	if reflectVal1.IsNil() {
+		return gerror.NewCodef(
+			gcode.CodeInvalidParameter,
+			`invalid parameter type "%v", of which value should not be nil`,
+			reflectVal1.Type(),
 		)
 	}
 	var (
@@ -118,6 +131,13 @@ func (r *Request) doParse(pointer any, requestType int) error {
 		if err := r.doParseArray(pointer, reflectVal2); err != nil {
 			return err
 		}
+	default:
+		return gerror.NewCodef(
+			gcode.CodeInvalidParameter,
+			`invalid parameter type "%v", of which kind should be of *struct/**struct/*[]struct/*[]*struct, but got: "%v"`,
+			reflectVal1.Type(),
+			reflectKind2,
+		)
 	}
 	return nil
 }
@@ -341,6 +361,9 @@ func (r *Request) parseBody() {
 	if body := r.GetBody(); len(body) > 0 {
 		// Trim space/new line characters.
 		body = bytes.TrimSpace(body)
+		if len(body) == 0 {
+			return
+		}
 		// JSON format checks.
 		if body[0] == '{' && body[len(body)-1] == '}' {
 			_ = json.UnmarshalUseNumber(body, &r.bodyMap)

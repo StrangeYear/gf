@@ -153,7 +153,7 @@ func (r *Request) prepareQueryStructData(pointer any, mapping ...map[string]stri
 		data = map[string]any{}
 	}
 	if err = r.mergeDefaultStructValue(data, pointer); err != nil {
-		return data, nil
+		return data, err
 	}
 	if err = r.doParseRequestData(data, pointer, mapping...); err != nil {
 		return data, err
