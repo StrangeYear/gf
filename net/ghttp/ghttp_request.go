@@ -54,6 +54,7 @@ type Request struct {
 
 	handlers          []*HandlerItemParsed // All matched handlers containing handler, hook and middleware for this request.
 	serveHandler      *HandlerItemParsed   // Real business handler serving for this request, not hook or middleware handler.
+	handlerRequest    any                  // Handler request object for Request/Response handler.
 	handlerResponse   any                  // Handler response object for Request/Response handler.
 	hasHookHandler    bool                 // A bool marking whether there's hook handler in the handlers for performance purpose.
 	hasServeHandler   bool                 // A bool marking whether there's serving handler in the handlers for performance purpose.

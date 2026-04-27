@@ -80,6 +80,7 @@ func createTypedStrictHandlerFunc[Req any, Res any](
 			r.error = err
 			return
 		}
+		r.handlerRequest = req
 		res, err := handler(r.Context(), req)
 		if err != nil {
 			r.error = err
@@ -420,11 +421,13 @@ func createRouterFunc(funcInfo handlerFuncInfo) func(r *Request) {
 				r.error = r.parseStrictRouteRequest(inputObjectPtr)
 			} else {
 				inputObject = reflect.New(reqStructType).Elem()
-				r.error = r.parseStrictRouteRequest(inputObject.Addr().Interface())
+				inputObjectPtr = inputObject.Addr().Interface()
+				r.error = r.parseStrictRouteRequest(inputObjectPtr)
 			}
 			if r.error != nil {
 				return
 			}
+			r.handlerRequest = inputObjectPtr
 			inputValues[1] = inputObject
 		}
 		// Call handler with dynamic created parameter values.

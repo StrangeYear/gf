@@ -93,6 +93,57 @@ func Test_Router_Handler_Standard_StrictHandler(t *testing.T) {
 	})
 }
 
+type TestHandlerRequestNormalReq struct {
+	g.Meta `path:"/handler-request-normal" method:"get"`
+	Name   string `query:"name"`
+}
+
+type TestHandlerRequestNormalRes struct{}
+
+type TestHandlerRequestGenericReq struct {
+	g.Meta `path:"/handler-request-generic" method:"get"`
+	Name   string `query:"name"`
+}
+
+type TestHandlerRequestGenericRes struct{}
+
+func Test_Router_Handler_Standard_GetHandlerRequest(t *testing.T) {
+	s := g.Server(guid.S())
+	s.BindMiddlewareDefault(func(r *ghttp.Request) {
+		r.Middleware.Next()
+		switch req := r.GetHandlerRequest().(type) {
+		case *TestHandlerRequestNormalReq:
+			r.Response.Write("normal:", req.Name)
+		case *TestHandlerRequestGenericReq:
+			r.Response.Write("generic:", req.Name)
+		default:
+			r.Response.Write("missing")
+		}
+	})
+	s.BindHandler("/", func(ctx context.Context, req *TestHandlerRequestNormalReq) (
+		res *TestHandlerRequestNormalRes, err error,
+	) {
+		return &TestHandlerRequestNormalRes{}, nil
+	})
+	s.BindStrictHandler(ghttp.NewStrictHandler(func(ctx context.Context, req *TestHandlerRequestGenericReq) (
+		res *TestHandlerRequestGenericRes, err error,
+	) {
+		return &TestHandlerRequestGenericRes{}, nil
+	}))
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+
+		t.Assert(client.GetContent(ctx, "/handler-request-normal?name=john"), "normal:john")
+		t.Assert(client.GetContent(ctx, "/handler-request-generic?name=smith"), "generic:smith")
+	})
+}
+
 type TestStrictHandlerFastBindReq struct {
 	g.Meta `path:"/strict-handler-fast-bind/:id" method:"get"`
 	ID     string `json:"idAlias" in:"path"`

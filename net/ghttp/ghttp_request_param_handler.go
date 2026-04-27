@@ -6,6 +6,11 @@
 
 package ghttp
 
+// GetHandlerRequest retrieves and returns the handler request object.
+func (r *Request) GetHandlerRequest() any {
+	return r.handlerRequest
+}
+
 // GetHandlerResponse retrieves and returns the handler response object and its error.
 func (r *Request) GetHandlerResponse() any {
 	return r.handlerResponse
