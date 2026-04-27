@@ -224,15 +224,17 @@ func (r *Request) prepareRequestStructData(pointer any, mapping ...map[string]st
 
 // mergeDefaultStructValue merges the request parameters with default values from struct tag definition.
 func (r *Request) mergeDefaultStructValue(data map[string]any, pointer any) error {
-	info := r.serveHandler.Handler.Info
-	if len(info.ReqStructDefaults) > 0 {
-		for _, field := range info.ReqStructDefaults {
-			mergeTagValueWithFoundKey(data, false, field.fieldName, field.fieldName, field.tagValue)
+	if r.serveHandler != nil && r.serveHandler.Handler != nil {
+		info := r.serveHandler.Handler.Info
+		if len(info.ReqStructDefaults) > 0 {
+			for _, field := range info.ReqStructDefaults {
+				mergeTagValueWithFoundKey(data, false, field.fieldName, field.fieldName, field.tagValue)
+			}
+			return nil
 		}
-		return nil
-	}
-	if info.IsStrictRoute {
-		return nil
+		if info.IsStrictRoute {
+			return nil
+		}
 	}
 
 	// provide non strict routing
@@ -251,6 +253,9 @@ func (r *Request) mergeDefaultStructValue(data map[string]any, pointer any) erro
 
 // mergeInTagStructValue merges the request parameters with header or cookie values from struct `in` tag definition.
 func (r *Request) mergeInTagStructValue(data map[string]any) error {
+	if r.serveHandler == nil || r.serveHandler.Handler == nil {
+		return nil
+	}
 	fields := r.serveHandler.Handler.Info.ReqStructIn
 	if len(fields) == 0 {
 		return nil
