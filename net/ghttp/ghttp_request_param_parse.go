@@ -745,6 +745,9 @@ func parseRuleTrim(_ context.Context, in ParseFuncInput) (any, error) {
 	if !ok || err != nil {
 		return in.Value, err
 	}
+	if in.Pattern == "" {
+		return strings.TrimSpace(value), nil
+	}
 	return strings.Trim(value, in.Pattern), nil
 }
 

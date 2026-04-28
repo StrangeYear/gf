@@ -45,6 +45,7 @@ func Test_Params_ParseTag_BuiltInAndValidation(t *testing.T) {
 		Title     string   `json:"title" parse:"trim-space|lower" v:"required"`
 		Slug      string   `json:"slug" parse:"trim-prefix:pre-|trim-suffix:-suf|upper"`
 		Trimmed   string   `json:"trimmed" parse:"trim:*"`
+		TrimSpace string   `json:"trim_space" parse:"trim"`
 		LeftRight string   `json:"left_right" parse:"trim-left:-|trim-right:_"`
 		Sentence  string   `json:"sentence" parse:"squash-space|title"`
 		Compact   string   `json:"compact" parse:"remove-space"`
@@ -77,6 +78,7 @@ func Test_Params_ParseTag_BuiltInAndValidation(t *testing.T) {
 				"title":      "  Demo  ",
 				"slug":       "pre-demo-suf",
 				"trimmed":    "***demo***",
+				"trim_space": " \t demo \n ",
 				"left_right": "---demo___",
 				"sentence":   "  hello   world  ",
 				"compact":    "  a \t b \n c  ",
@@ -85,7 +87,7 @@ func Test_Params_ParseTag_BuiltInAndValidation(t *testing.T) {
 				"tags":       []string{"  alpha  ", " beta "},
 				"profile":    g.Map{"nick": "  john  "},
 			}),
-			`{"title":"demo","slug":"DEMO","trimmed":"demo","left_right":"demo","sentence":"Hello World","compact":"abc","replaced":"bar bar","alias":null,"tags":["ALPHA","BETA"],"profile":{"nick":"JOHN"}}`,
+			`{"title":"demo","slug":"DEMO","trimmed":"demo","trim_space":"demo","left_right":"demo","sentence":"Hello World","compact":"abc","replaced":"bar bar","alias":null,"tags":["ALPHA","BETA"],"profile":{"nick":"JOHN"}}`,
 		)
 		t.Assert(
 			client.ContentJson().PostContent(ctx, "/parse-tag-built-in", g.Map{
