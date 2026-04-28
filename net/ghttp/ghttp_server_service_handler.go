@@ -58,20 +58,18 @@ func NewStrictHandler[Req any, Res any](
 		)
 		return h
 	}
-	h.handlerFunc = createTypedStrictHandlerFunc(handler)
+	h.handlerFunc = createTypedStrictHandlerFunc(handler, h.reqStructPool)
 	return h
 }
 
 func createTypedStrictHandlerFunc[Req any, Res any](
-	handler func(context.Context, *Req) (*Res, error),
+	handler func(context.Context, *Req) (*Res, error), reqStructPool *sync.Pool,
 ) HandlerFunc {
 	return func(r *Request) {
 		var req *Req
-		if r.Server.config.RequestStructPoolEnabled && r.serveHandler != nil && r.serveHandler.Handler != nil {
-			if pool := r.serveHandler.Handler.Info.ReqStructPool; pool != nil {
-				req = pool.Get().(*Req)
-				r.setPooledRequestStruct(pool, req)
-			}
+		if r.Server.config.RequestStructPoolEnabled && reqStructPool != nil {
+			req = reqStructPool.Get().(*Req)
+			r.setPooledRequestStruct(reqStructPool, req)
 		}
 		if req == nil {
 			req = new(Req)

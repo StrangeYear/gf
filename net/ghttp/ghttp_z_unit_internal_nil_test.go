@@ -98,3 +98,31 @@ func TestInternal_RequestParseWithoutServeHandler(t *testing.T) {
 		})
 	}
 }
+
+func TestInternal_RequestParseIgnoresServeHandlerMetadata(t *testing.T) {
+	type requestStruct struct {
+		Id   int    `json:"id" d:"9"`
+		Name string `json:"name"`
+	}
+
+	s := newBenchmarkServer("test-request-parse-ignores-serve-handler-metadata")
+	r, _ := newBenchmarkRequest(s, http.MethodGet, "http://127.0.0.1/parse?name=john", "")
+	defer closeTestRequest(t, r)
+
+	r.serveHandler = &HandlerItemParsed{
+		Handler: &HandlerItem{
+			Info: handlerFuncInfo{
+				IsStrictRoute: true,
+			},
+		},
+	}
+	r.hasServeHandler = true
+
+	var req requestStruct
+	if err := r.Parse(&req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Id != 9 || req.Name != "john" {
+		t.Fatalf("unexpected parsed request: %#v", req)
+	}
+}

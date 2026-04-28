@@ -166,11 +166,11 @@ func strictFastBindTagName(value string) string {
 	return value
 }
 
-func (r *Request) bindStrictRouteRequestFast(pointer any) (ok bool, err error) {
-	if r == nil || r.serveHandler == nil || r.serveHandler.Handler == nil {
+func (r *Request) bindStrictRouteRequestFast(pointer any, info *handlerFuncInfo) (ok bool, err error) {
+	if r == nil || info == nil {
 		return false, nil
 	}
-	meta := r.serveHandler.Handler.Info.ReqStructFastBindMeta
+	meta := info.ReqStructFastBindMeta
 	if meta == nil {
 		return false, nil
 	}

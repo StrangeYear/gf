@@ -77,6 +77,10 @@ func (r *Request) ParseForm(pointer any) error {
 
 // doParse parses the request data to struct/structs according to request type.
 func (r *Request) doParse(pointer any, requestType int) error {
+	return r.doParseWithInfo(pointer, requestType, nil)
+}
+
+func (r *Request) doParseWithInfo(pointer any, requestType int, info *handlerFuncInfo) error {
 	if pointer == nil {
 		return gerror.NewCode(
 			gcode.CodeInvalidParameter,
@@ -115,13 +119,13 @@ func (r *Request) doParse(pointer any, requestType int) error {
 			err  error
 			data map[string]any
 		)
-		if data, err = r.prepareParsedStructData(pointer, requestType); err != nil {
+		if data, err = r.prepareParsedStructData(pointer, requestType, info); err != nil {
 			return err
 		}
 		if err = gconv.Struct(data, pointer); err != nil {
 			return err
 		}
-		if err = r.validateParsedStruct(pointer, data); err != nil {
+		if err = r.validateParsedStruct(pointer, data, info); err != nil {
 			return err
 		}
 
@@ -143,10 +147,11 @@ func (r *Request) doParse(pointer any, requestType int) error {
 }
 
 func (r *Request) parseStrictRouteRequest(pointer any) error {
-	if ok, err := r.bindStrictRouteRequestFast(pointer); ok || err != nil {
+	info := r.strictHandlerInfo()
+	if ok, err := r.bindStrictRouteRequestFast(pointer, info); ok || err != nil {
 		return err
 	}
-	if r.shouldUseCustomRequestParser() {
+	if info != nil && info.ReqStructHasCustomParser {
 		// Custom Parse only replaces parameter assignment; validation remains owned by ghttp.
 		parser, ok := pointer.(RequestParser)
 		if !ok {
@@ -156,46 +161,47 @@ func (r *Request) parseStrictRouteRequest(pointer any) error {
 				pointer,
 			)
 		}
-		if !r.shouldValidateParsedStruct() {
+		if !shouldValidateParsedStruct(info) {
 			return parser.Parse(r)
 		}
-		assoc, err := r.prepareParsedStructData(pointer, parseTypeRequest)
+		assoc, err := r.prepareParsedStructData(pointer, parseTypeRequest, info)
 		if err != nil {
 			return err
 		}
 		if err := parser.Parse(r); err != nil {
 			return err
 		}
-		return r.validateParsedStruct(pointer, assoc)
+		return r.validateParsedStruct(pointer, assoc, info)
 	}
-	return r.Parse(pointer)
+	return r.doParseWithInfo(pointer, parseTypeRequest, info)
 }
 
-func (r *Request) prepareParsedStructData(pointer any, requestType int) (data map[string]any, err error) {
+func (r *Request) prepareParsedStructData(
+	pointer any, requestType int, info *handlerFuncInfo,
+) (data map[string]any, err error) {
 	switch requestType {
 	case parseTypeQuery:
-		return r.prepareQueryStructData(pointer)
+		return r.prepareQueryStructDataWithInfo(pointer, info)
 	case parseTypeForm:
-		return r.prepareFormStructData(pointer)
+		return r.prepareFormStructDataWithInfo(pointer, info)
 	default:
-		return r.prepareRequestStructData(pointer)
+		return r.prepareRequestStructDataWithInfo(pointer, info)
 	}
 }
 
-func (r *Request) shouldUseCustomRequestParser() bool {
+func (r *Request) strictHandlerInfo() *handlerFuncInfo {
 	if r == nil || r.serveHandler == nil || r.serveHandler.Handler == nil {
-		return false
+		return nil
 	}
-	info := r.serveHandler.Handler.Info
-	return info.IsStrictRoute && info.ReqStructHasCustomParser
-}
-
-func (r *Request) shouldValidateParsedStruct() bool {
-	if r == nil || r.serveHandler == nil || r.serveHandler.Handler == nil {
-		return true
-	}
-	info := r.serveHandler.Handler.Info
+	info := &r.serveHandler.Handler.Info
 	if !info.IsStrictRoute {
+		return nil
+	}
+	return info
+}
+
+func shouldValidateParsedStruct(info *handlerFuncInfo) bool {
+	if info == nil || !info.IsStrictRoute {
 		return true
 	}
 	// Strict object routes cache request-struct metadata at registration time.
@@ -204,8 +210,8 @@ func (r *Request) shouldValidateParsedStruct() bool {
 	return info.ReqStructNeedsValidation
 }
 
-func (r *Request) validateParsedStruct(pointer any, assoc any) error {
-	if !r.shouldValidateParsedStruct() {
+func (r *Request) validateParsedStruct(pointer any, assoc any, info *handlerFuncInfo) error {
+	if !shouldValidateParsedStruct(info) {
 		return nil
 	}
 	validator := gvalid.New().Bail().Data(pointer)

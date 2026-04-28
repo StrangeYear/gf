@@ -200,22 +200,28 @@ func (r *Request) doGetRequestStruct(pointer any, mapping ...map[string]string) 
 }
 
 func (r *Request) prepareRequestStructData(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
+	return r.prepareRequestStructDataWithInfo(pointer, nil, mapping...)
+}
+
+func (r *Request) prepareRequestStructDataWithInfo(
+	pointer any, info *handlerFuncInfo, mapping ...map[string]string,
+) (data map[string]any, err error) {
 	data = r.GetRequestMap()
 	if data == nil {
 		data = map[string]any{}
 	}
 
 	// `in` Tag Struct values.
-	if err = r.mergeInTagStructValue(data); err != nil {
+	if err = r.mergeInTagStructValue(data, info); err != nil {
 		return data, err
 	}
 
 	// Default struct values.
-	if err = r.mergeDefaultStructValue(data, pointer); err != nil {
+	if err = r.mergeDefaultStructValue(data, pointer, info); err != nil {
 		return data, err
 	}
 
-	if err = r.doParseRequestData(data, pointer, mapping...); err != nil {
+	if err = r.doParseRequestData(data, pointer, info, mapping...); err != nil {
 		return data, err
 	}
 
@@ -223,9 +229,8 @@ func (r *Request) prepareRequestStructData(pointer any, mapping ...map[string]st
 }
 
 // mergeDefaultStructValue merges the request parameters with default values from struct tag definition.
-func (r *Request) mergeDefaultStructValue(data map[string]any, pointer any) error {
-	if r.serveHandler != nil && r.serveHandler.Handler != nil {
-		info := r.serveHandler.Handler.Info
+func (r *Request) mergeDefaultStructValue(data map[string]any, pointer any, info *handlerFuncInfo) error {
+	if info != nil {
 		if len(info.ReqStructDefaults) > 0 {
 			for _, field := range info.ReqStructDefaults {
 				mergeTagValueWithFoundKey(data, false, field.fieldName, field.fieldName, field.tagValue)
@@ -252,11 +257,11 @@ func (r *Request) mergeDefaultStructValue(data map[string]any, pointer any) erro
 }
 
 // mergeInTagStructValue merges the request parameters with header or cookie values from struct `in` tag definition.
-func (r *Request) mergeInTagStructValue(data map[string]any) error {
-	if r.serveHandler == nil || r.serveHandler.Handler == nil {
+func (r *Request) mergeInTagStructValue(data map[string]any, info *handlerFuncInfo) error {
+	if info == nil {
 		return nil
 	}
-	fields := r.serveHandler.Handler.Info.ReqStructIn
+	fields := info.ReqStructIn
 	if len(fields) == 0 {
 		return nil
 	}

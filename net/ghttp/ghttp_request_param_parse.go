@@ -189,11 +189,13 @@ func storeBuiltinParseFuncMapSnapshotLocked() {
 	builtinParseFuncMapSnapshot.Store(ruleMap)
 }
 
-func (r *Request) doParseRequestData(data map[string]any, pointer any, mapping ...map[string]string) error {
+func (r *Request) doParseRequestData(
+	data map[string]any, pointer any, info *handlerFuncInfo, mapping ...map[string]string,
+) error {
 	if len(data) == 0 || pointer == nil {
 		return nil
 	}
-	parseMeta, err := r.getRequestParseStructMeta(pointer)
+	parseMeta, err := getRequestParseStructMeta(pointer, info)
 	if err != nil {
 		return err
 	}
@@ -509,12 +511,12 @@ func getParseStructArrayItemType(pointer any) (reflect.Type, error) {
 	return indirectToType(reflectType.Elem()), nil
 }
 
-func (r *Request) getRequestParseStructMeta(pointer any) (*parseStructMeta, error) {
-	if r != nil && r.serveHandler != nil && r.serveHandler.Handler != nil && r.serveHandler.Handler.Info.IsStrictRoute {
-		if !r.serveHandler.Handler.Info.ReqStructHasParseTag {
+func getRequestParseStructMeta(pointer any, info *handlerFuncInfo) (*parseStructMeta, error) {
+	if info != nil && info.IsStrictRoute {
+		if !info.ReqStructHasParseTag {
 			return nil, nil
 		}
-		return r.serveHandler.Handler.Info.ReqStructParseMeta, nil
+		return info.ReqStructParseMeta, nil
 	}
 	return getOrBuildParseStructMeta(pointer)
 }

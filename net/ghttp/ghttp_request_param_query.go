@@ -211,15 +211,21 @@ func (r *Request) doGetQueryStruct(pointer any, mapping ...map[string]string) (d
 }
 
 func (r *Request) prepareQueryStructData(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
+	return r.prepareQueryStructDataWithInfo(pointer, nil, mapping...)
+}
+
+func (r *Request) prepareQueryStructDataWithInfo(
+	pointer any, info *handlerFuncInfo, mapping ...map[string]string,
+) (data map[string]any, err error) {
 	r.parseQuery()
 	data = r.GetQueryMap()
 	if data == nil {
 		data = map[string]any{}
 	}
-	if err = r.mergeDefaultStructValue(data, pointer); err != nil {
+	if err = r.mergeDefaultStructValue(data, pointer, info); err != nil {
 		return data, err
 	}
-	if err = r.doParseRequestData(data, pointer, mapping...); err != nil {
+	if err = r.doParseRequestData(data, pointer, info, mapping...); err != nil {
 		return data, err
 	}
 	return data, nil

@@ -104,15 +104,21 @@ func (r *Request) doGetFormStruct(pointer any, mapping ...map[string]string) (da
 }
 
 func (r *Request) prepareFormStructData(pointer any, mapping ...map[string]string) (data map[string]any, err error) {
+	return r.prepareFormStructDataWithInfo(pointer, nil, mapping...)
+}
+
+func (r *Request) prepareFormStructDataWithInfo(
+	pointer any, info *handlerFuncInfo, mapping ...map[string]string,
+) (data map[string]any, err error) {
 	r.parseForm()
 	data = r.formMap
 	if data == nil {
 		data = map[string]any{}
 	}
-	if err = r.mergeDefaultStructValue(data, pointer); err != nil {
+	if err = r.mergeDefaultStructValue(data, pointer, info); err != nil {
 		return data, err
 	}
-	if err = r.doParseRequestData(data, pointer, mapping...); err != nil {
+	if err = r.doParseRequestData(data, pointer, info, mapping...); err != nil {
 		return data, err
 	}
 	return data, nil
