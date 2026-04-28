@@ -170,7 +170,7 @@ func BenchmarkInternal_ParseRuleLookup(b *testing.B) {
 	b.Run("serial", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if getCustomParseFunc("trim-space") == nil {
+			if getParseFunc("trim-space") == nil {
 				b.Fatal("parse rule not found")
 			}
 		}
@@ -179,7 +179,7 @@ func BenchmarkInternal_ParseRuleLookup(b *testing.B) {
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				if getCustomParseFunc("trim-space") == nil {
+				if getParseFunc("trim-space") == nil {
 					b.Fatal("parse rule not found")
 				}
 			}

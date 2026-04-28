@@ -133,6 +133,70 @@ func Test_Params_ParseTag_CustomRuleAndServiceBinding(t *testing.T) {
 	})
 }
 
+func Test_Params_ParseTag_CustomRuleOverridesBuiltIn(t *testing.T) {
+	if ruleMap := ghttp.GetRegisteredParseRuleMap(); ruleMap != nil {
+		if _, ok := ruleMap["trim-space"]; ok {
+			t.Fatal(`builtin parse rule "trim-space" should not be stored in custom rule map`)
+		}
+	}
+	ghttp.RegisterParseRule("trim-space", func(ctx context.Context, in ghttp.ParseFuncInput) (any, error) {
+		value, ok := in.Value.(string)
+		if !ok {
+			return in.Value, nil
+		}
+		return fmt.Sprintf("custom:%s", value), nil
+	})
+	defer ghttp.DeleteParseRule("trim-space")
+	if ruleMap := ghttp.GetRegisteredParseRuleMap(); ruleMap["trim-space"] == nil {
+		t.Fatal(`custom parse rule "trim-space" should be stored in custom rule map`)
+	}
+
+	type Req struct {
+		Name string `json:"name" parse:"trim-space"`
+	}
+	s := g.Server(guid.S())
+	s.BindHandler("/parse-tag-custom-overrides-builtin", func(r *ghttp.Request) {
+		var req *Req
+		if err := r.Parse(&req); err != nil {
+			r.Response.WriteExit(err)
+		}
+		r.Response.WriteJsonExit(req)
+	})
+	s.SetDumpRouterMap(false)
+	s.Start()
+	defer s.Shutdown()
+
+	time.Sleep(100 * time.Millisecond)
+
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		t.Assert(
+			client.ContentJson().PostContent(ctx, "/parse-tag-custom-overrides-builtin", g.Map{
+				"name": "  john  ",
+			}),
+			`{"name":"custom:  john  "}`,
+		)
+	})
+
+	ghttp.DeleteParseRule("trim-space")
+	if ruleMap := ghttp.GetRegisteredParseRuleMap(); ruleMap != nil {
+		if _, ok := ruleMap["trim-space"]; ok {
+			t.Fatal(`custom parse rule "trim-space" should be deleted from custom rule map`)
+		}
+	}
+	gtest.C(t, func(t *gtest.T) {
+		client := g.Client()
+		client.SetPrefix(fmt.Sprintf("http://127.0.0.1:%d", s.GetListenedPort()))
+		t.Assert(
+			client.ContentJson().PostContent(ctx, "/parse-tag-custom-overrides-builtin", g.Map{
+				"name": "  john  ",
+			}),
+			`{"name":"john"}`,
+		)
+	})
+}
+
 func Test_Params_ParseTag_ForeachUsesElementFieldType(t *testing.T) {
 	ghttp.RegisterParseRule("assert-string-element", func(ctx context.Context, in ghttp.ParseFuncInput) (any, error) {
 		if in.FieldType.Kind() != reflect.String {

@@ -85,11 +85,17 @@ var (
 	customParseFuncMu          sync.Mutex
 	customParseFuncMap         = make(map[string]ParseFunc)
 	customParseFuncMapSnapshot atomic.Value
-	parseStructMetaCache       sync.Map
+
+	// builtinParseFuncMap stores the builtin parse functions.
+	// map[Rule]ParseFunc
+	builtinParseFuncMu          sync.Mutex
+	builtinParseFuncMap         = make(map[string]ParseFunc)
+	builtinParseFuncMapSnapshot atomic.Value
+	parseStructMetaCache        sync.Map
 )
 
 func init() {
-	RegisterParseRuleByMap(map[string]ParseFunc{
+	registerBuiltinParseRuleByMap(map[string]ParseFunc{
 		"trim-space":   parseRuleTrimSpace,
 		"trim-left":    parseRuleTrimLeft,
 		"trim-right":   parseRuleTrimRight,
@@ -164,6 +170,23 @@ func storeCustomParseFuncMapSnapshotLocked() {
 		ruleMap[k] = v
 	}
 	customParseFuncMapSnapshot.Store(ruleMap)
+}
+
+func registerBuiltinParseRuleByMap(m map[string]ParseFunc) {
+	builtinParseFuncMu.Lock()
+	defer builtinParseFuncMu.Unlock()
+	for k, v := range m {
+		builtinParseFuncMap[k] = v
+	}
+	storeBuiltinParseFuncMapSnapshotLocked()
+}
+
+func storeBuiltinParseFuncMapSnapshotLocked() {
+	ruleMap := make(map[string]ParseFunc, len(builtinParseFuncMap))
+	for k, v := range builtinParseFuncMap {
+		ruleMap[k] = v
+	}
+	builtinParseFuncMapSnapshot.Store(ruleMap)
 }
 
 func (r *Request) doParseRequestData(data map[string]any, pointer any, mapping ...map[string]string) error {
@@ -277,7 +300,7 @@ func (r *Request) doParseRuleItems(
 		if rule.Name == parseRuleForeach {
 			return r.doParseForeachRule(currentValue, data, fieldMeta, fieldPath, fieldMeta.ParseRules[i+1:])
 		}
-		parseFunc := getCustomParseFunc(rule.Name)
+		parseFunc := getParseFunc(rule.Name)
 		if parseFunc == nil {
 			return nil, gerror.NewCodef(
 				gcode.CodeInvalidParameter,
@@ -303,8 +326,13 @@ func (r *Request) doParseRuleItems(
 	return currentValue, nil
 }
 
-func getCustomParseFunc(rule string) ParseFunc {
+func getParseFunc(rule string) ParseFunc {
 	if ruleMap, ok := customParseFuncMapSnapshot.Load().(map[string]ParseFunc); ok {
+		if parseFunc := ruleMap[rule]; parseFunc != nil {
+			return parseFunc
+		}
+	}
+	if ruleMap, ok := builtinParseFuncMapSnapshot.Load().(map[string]ParseFunc); ok {
 		return ruleMap[rule]
 	}
 	return nil
