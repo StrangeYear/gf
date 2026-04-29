@@ -288,3 +288,46 @@ func Test_Issue_Yaml(t *testing.T) {
 		t.Assert(i18n.T(ctx, "{#resourceUsage.workflow}"), "workflow")
 	})
 }
+
+func Test_LanguageMatchPriority(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		path := gfile.Temp(gtime.TimestampNanoStr())
+		defer gfile.RemoveAll(path)
+
+		t.AssertNil(gfile.PutContents(gfile.Join(path, "zh.yaml"), "hello: \"short\""))
+		t.AssertNil(gfile.PutContents(gfile.Join(path, "zh-CN.toml"), "hello = \"exact\""))
+
+		i18n := gi18n.New(gi18n.Options{Path: path})
+		i18n.SetLanguage("zh-CN")
+		t.Assert(i18n.T(context.Background(), "{#hello}"), "exact")
+	})
+}
+
+func Test_LanguageMatchStandardized(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		path := gfile.Temp(gtime.TimestampNanoStr())
+		defer gfile.RemoveAll(path)
+
+		t.AssertNil(gfile.PutContents(gfile.Join(path, "zh-cn.toml"), "hello = \"canonical\""))
+
+		i18n := gi18n.New(gi18n.Options{Path: path})
+		i18n.SetLanguage("zh-CN")
+		t.Assert(i18n.T(context.Background(), "{#hello}"), "canonical")
+
+		ctx := gi18n.WithLanguage(context.Background(), "zh_CN")
+		t.Assert(i18n.GetContent(ctx, "hello"), "canonical")
+	})
+}
+
+func Test_LanguageMatchShortFallback(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		path := gfile.Temp(gtime.TimestampNanoStr())
+		defer gfile.RemoveAll(path)
+
+		t.AssertNil(gfile.PutContents(gfile.Join(path, "zh.yaml"), "hello: \"short\""))
+
+		i18n := gi18n.New(gi18n.Options{Path: path})
+		i18n.SetLanguage("zh-CN")
+		t.Assert(i18n.T(context.Background(), "{#hello}"), "short")
+	})
+}

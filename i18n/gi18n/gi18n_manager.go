@@ -34,11 +34,12 @@ const (
 
 // Manager for i18n contents, it is concurrent safe, supporting hot reload.
 type Manager struct {
-	mu       sync.RWMutex
-	data     map[string]map[string]string // Translating map.
-	pattern  string                       // Pattern for regex parsing.
-	pathType pathType                     // Path type for i18n files.
-	options  Options                      // configuration options.
+	mu                  sync.RWMutex
+	data                map[string]map[string]string // Translating map.
+	standardLanguageMap map[string]string            // Standardized language => actual language key.
+	pattern             string                       // Pattern for regex parsing.
+	pathType            pathType                     // Path type for i18n files.
+	options             Options                      // configuration options.
 }
 
 // Options is used for i18n object configuration.
@@ -179,7 +180,7 @@ func (m *Manager) Translate(ctx context.Context, content string) string {
 	if lang := LanguageFromCtx(ctx); lang != "" {
 		transLang = lang
 	}
-	data := m.data[transLang]
+	data, matchedLanguage := m.lookupLanguageData(transLang)
 	if data == nil {
 		return content
 	}
@@ -198,7 +199,7 @@ func (m *Manager) Translate(ctx context.Context, content string) string {
 			// return match[0] will return the original content
 			return match[0]
 		})
-	intlog.Printf(ctx, `Translate for language: %s`, transLang)
+	intlog.Printf(ctx, `Translate for language: %s, matched language: %s`, transLang, matchedLanguage)
 	return result
 }
 
@@ -212,7 +213,7 @@ func (m *Manager) GetContent(ctx context.Context, key string) string {
 	if lang := LanguageFromCtx(ctx); lang != "" {
 		transLang = lang
 	}
-	if data, ok := m.data[transLang]; ok {
+	if data, _ := m.lookupLanguageData(transLang); data != nil {
 		return data[key]
 	}
 	return ""
@@ -223,6 +224,7 @@ func (m *Manager) reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.data = nil
+	m.standardLanguageMap = nil
 }
 
 // init initializes the manager for lazy initialization design.
@@ -315,5 +317,62 @@ func (m *Manager) init(ctx context.Context) {
 			m.reset()
 			gfsnotify.Exit()
 		})
+	}
+	m.rebuildStandardLanguageMap()
+}
+
+func (m *Manager) lookupLanguageData(language string) (data map[string]string, matchedLanguage string) {
+	searchInfo := newLanguageSearchInfo(language)
+	if len(searchInfo.candidates) == 0 {
+		return nil, ""
+	}
+	if searchInfo.exactLanguage != "" {
+		if data = m.data[searchInfo.exactLanguage]; data != nil {
+			return data, searchInfo.exactLanguage
+		}
+	}
+	if searchInfo.standardLanguage != "" {
+		if data, matchedLanguage = m.lookupStandardLanguageData(searchInfo.standardLanguage); data != nil {
+			return data, matchedLanguage
+		}
+	}
+	if searchInfo.shortLanguage != "" {
+		if data, matchedLanguage = m.lookupStandardLanguageData(searchInfo.shortLanguage); data != nil {
+			return data, matchedLanguage
+		}
+	}
+	return nil, ""
+}
+
+func (m *Manager) lookupStandardLanguageData(language string) (data map[string]string, matchedLanguage string) {
+	if language == "" {
+		return nil, ""
+	}
+	if data = m.data[language]; data != nil {
+		return data, language
+	}
+	if matchedLanguage, ok := m.standardLanguageMap[language]; ok {
+		if data = m.data[matchedLanguage]; data != nil {
+			return data, matchedLanguage
+		}
+	}
+	return nil, ""
+}
+
+func (m *Manager) rebuildStandardLanguageMap() {
+	if len(m.data) == 0 {
+		m.standardLanguageMap = nil
+		return
+	}
+	m.standardLanguageMap = make(map[string]string)
+	for language := range m.data {
+		standardLanguage := standardizeLanguageCode(language)
+		if standardLanguage == "" {
+			continue
+		}
+		if currentLanguage, ok := m.standardLanguageMap[standardLanguage]; !ok ||
+			(currentLanguage != standardLanguage && language == standardLanguage) {
+			m.standardLanguageMap[standardLanguage] = language
+		}
 	}
 }
