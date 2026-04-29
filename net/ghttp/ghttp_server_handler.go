@@ -196,6 +196,8 @@ func (s *Server) handleAfterRequestDone(request *Request) {
 	}
 	// access log handling.
 	s.handleAccessLog(request)
+	// Metrics must be collected before response wrappers are returned to their pools.
+	s.handleMetricsAfterRequestDone(request)
 	// Close the session, which automatically update the TTL
 	// of the session if it exists.
 	if err := request.Session.Close(); err != nil {
@@ -215,9 +217,6 @@ func (s *Server) handleAfterRequestDone(request *Request) {
 			intlog.Errorf(request.Context(), `%+v`, err)
 		}
 	}
-
-	// Metrics.
-	s.handleMetricsAfterRequestDone(request)
 
 	releaseRequest(request)
 }
