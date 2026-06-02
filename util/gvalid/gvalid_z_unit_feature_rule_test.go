@@ -381,23 +381,50 @@ func Test_Datetime(t *testing.T) {
 
 func Test_DateFormat(t *testing.T) {
 	gtest.C(t, func(t *gtest.T) {
-		m := g.MapStrStr{
-			"2010":                 "date-format:Y",
-			"201011":               "date-format:Ym",
-			"2010.11":              "date-format:Y.m",
-			"201011-01":            "date-format:Ym-d",
-			"2010~11~01":           "date-format:Y~m~d",
-			"2010-11~01":           "date-format:Y-m~d",
-			"2023-09-10T19:46:31Z": "date-format:2006-01-02\\T15:04:05Z07:00", // RFC3339
+		referenceTime := time.Date(2006, 1, 2, 15, 4, 5, 123456789, time.FixedZone("MST", -7*60*60))
+		array := []struct {
+			value string
+			rule  string
+		}{
+			{value: "2010", rule: "date-format:Y"},
+			{value: "201011", rule: "date-format:Ym"},
+			{value: "2010.11", rule: "date-format:Y.m"},
+			{value: "201011-01", rule: "date-format:Ym-d"},
+			{value: "2010~11~01", rule: "date-format:Y~m~d"},
+			{value: "2010-11~01", rule: "date-format:Y-m~d"},
+			{value: "2023-09-10T19:46:31Z", rule: "date-format:2006-01-02\\T15:04:05Z07:00"}, // RFC3339
+			{value: referenceTime.Format(time.Layout), rule: "date-format:layout"},
+			{value: referenceTime.Format(time.ANSIC), rule: "date-format:ansic"},
+			{value: referenceTime.Format(time.UnixDate), rule: "date-format:unix-date"},
+			{value: referenceTime.Format(time.RubyDate), rule: "date-format:ruby-date"},
+			{value: referenceTime.Format(time.RFC822), rule: "date-format:rfc822"},
+			{value: referenceTime.Format(time.RFC822Z), rule: "date-format:rfc822-z"},
+			{value: referenceTime.Format(time.RFC850), rule: "date-format:rfc850"},
+			{value: referenceTime.Format(time.RFC1123), rule: "date-format:rfc1123"},
+			{value: referenceTime.Format(time.RFC1123Z), rule: "date-format:rfc1123-z"},
+			{value: referenceTime.Format(time.RFC3339), rule: "date-format:rfc3339"},
+			{value: referenceTime.Format(time.RFC3339Nano), rule: "date-format:rfc3339-nano"},
+			{value: referenceTime.Format(time.RFC3339Nano), rule: "date-format"},
+			{value: referenceTime.Format(time.Kitchen), rule: "date-format:kitchen"},
+			{value: referenceTime.Format(time.Stamp), rule: "date-format:stamp"},
+			{value: referenceTime.Format(time.StampMilli), rule: "date-format:stamp-milli"},
+			{value: referenceTime.Format(time.StampMicro), rule: "date-format:stamp-micro"},
+			{value: referenceTime.Format(time.StampNano), rule: "date-format:stamp-nano"},
+			{value: referenceTime.Format(time.DateTime), rule: "date-format:date-time"},
+			{value: referenceTime.Format(time.DateOnly), rule: "date-format:date-only"},
+			{value: referenceTime.Format(time.TimeOnly), rule: "date-format:time-only"},
 		}
-		for k, v := range m {
-			err := g.Validator().Data(k).Rules(v).Run(ctx)
+		for _, item := range array {
+			err := g.Validator().Data(item.value).Rules(item.rule).Run(ctx)
 			t.AssertNil(err)
 		}
 	})
 	gtest.C(t, func(t *gtest.T) {
 		errM := g.MapStrStr{
-			"2010-11~01": "date-format:Y~m~d",
+			"01/02 03:04:05PM '06 -0700": "date-format",
+			"2010":                       "date-format",
+			"2010-11~01":                 "date-format:Y~m~d",
+			"2023-09-10 19:46:31":        "date-format:rfc3339",
 		}
 		for k, v := range errM {
 			err := g.Validator().Data(k).Rules(v).Run(ctx)
