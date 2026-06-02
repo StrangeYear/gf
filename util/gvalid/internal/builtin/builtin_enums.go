@@ -82,11 +82,11 @@ func (r RuleEnums) Run(in RunInput) error {
 			typeId,
 		)
 	}
-	tagEnumsBytes, err := json.Marshal(enumsValues)
-	if err == nil {
-		tagEnums = string(tagEnumsBytes)
-	}
 	if !gstr.InArray(gconv.Strings(enumsValues), in.Value.String()) {
+		tagEnumsBytes, err := json.Marshal(enumsValues)
+		if err == nil {
+			tagEnums = string(tagEnumsBytes)
+		}
 		return errors.New(gstr.Replace(
 			in.Message, `{enums}`, tagEnums,
 		))
