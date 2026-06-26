@@ -1481,6 +1481,51 @@ func Test_TypeMapping(t *testing.T) {
 	})
 }
 
+func Test_FormatMapping(t *testing.T) {
+	type Carbon struct {
+		Timestamp int64 `json:"timestamp"`
+	}
+	type DateOnly struct {
+		Timestamp int64 `json:"timestamp"`
+	}
+	type Req struct {
+		gmeta.Meta `path:"/CreateResourceReq" method:"POST" tags:"default"`
+		At         Carbon   `dc:"time value" json:"at"`
+		Date       DateOnly `dc:"date value" json:"date"`
+	}
+
+	gtest.C(t, func(t *gtest.T) {
+		var (
+			err error
+			oai = goai.New()
+			req = new(Req)
+		)
+		oai.Config.TypeMapping = map[string]string{
+			"goai_test.Carbon": goai.TypeString,
+			"github.com/gogf/gf/v2/net/goai_test.DateOnly": goai.TypeString,
+		}
+		oai.Config.FormatMapping = map[string]string{
+			"goai_test.Carbon": goai.FormatDateTime,
+			"github.com/gogf/gf/v2/net/goai_test.DateOnly": goai.FormatDate,
+		}
+
+		err = oai.Add(goai.AddInput{
+			Object: req,
+		})
+		t.AssertNil(err)
+
+		var reqKey = "github.com.gogf.gf.v2.net.goai_test.Req"
+		t.Assert(
+			oai.Components.Schemas.Get(reqKey).Value.Properties.Get("at").Value.Format,
+			goai.FormatDateTime,
+		)
+		t.Assert(
+			oai.Components.Schemas.Get(reqKey).Value.Properties.Get("date").Value.Format,
+			goai.FormatDate,
+		)
+	})
+}
+
 func Test_XExtension(t *testing.T) {
 	type GetListReq struct {
 		g.Meta `path:"/user" tags:"User" method:"get" x-group:"User/Info" summary:"Get user list with basic info."`

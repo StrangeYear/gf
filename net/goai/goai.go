@@ -203,10 +203,32 @@ func (oai *OpenApiV3) getCustomOAITypeByGolangType(t reflect.Type) (string, bool
 	return "", false
 }
 
+func (oai *OpenApiV3) getCustomOAIFormatByGolangType(t reflect.Type) (string, bool) {
+	if len(oai.Config.FormatMapping) == 0 || t == nil {
+		return "", false
+	}
+	if customFormat, ok := oai.Config.FormatMapping[t.String()]; ok {
+		return customFormat, true
+	}
+	if t.PkgPath() != "" && t.Name() != "" {
+		typeId := fmt.Sprintf(`%s.%s`, t.PkgPath(), t.Name())
+		if customFormat, ok := oai.Config.FormatMapping[typeId]; ok {
+			return customFormat, true
+		}
+	}
+	return "", false
+}
+
 // golangTypeToOAIFormat converts and returns OpenAPI parameter format for given golang type `t`.
 // Note that it does not return standard OpenAPI parameter format but custom format in golang type.
 func (oai *OpenApiV3) golangTypeToOAIFormat(t reflect.Type) string {
 	format := t.String()
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if customFormat, ok := oai.getCustomOAIFormatByGolangType(t); ok {
+		return customFormat
+	}
 	switch gstr.TrimLeft(format, "*") {
 	case `[]uint8`:
 		return FormatBinary

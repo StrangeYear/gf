@@ -33,6 +33,11 @@ type Config struct {
 	// 1. `carbon.Carbon`
 	// 2. `github.com/golang-module/carbon/v2.Carbon`
 	TypeMapping map[string]string
+	// FormatMapping customizes OpenAPI format mapping for given golang types.
+	// Map key supports both short type name and full type id:
+	// 1. `carbon.Carbon`
+	// 2. `github.com/golang-module/carbon/v2.Carbon`
+	FormatMapping map[string]string
 	// EnumXExtensionFunc is called for each enum type.
 	// Returned extension values are written to schema x-extensions.
 	EnumXExtensionFunc EnumXExtensionFunc
